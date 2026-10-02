@@ -14,6 +14,7 @@ class SchoolProfileController extends Controller
     {
         return response()->json(['data' => $this->profile()->only([
             'school_name', 'logo_path', 'favicon_path', 'address', 'phone', 'email', 'website',
+            'theme_primary', 'theme_accent',
         ])]);
     }
 
@@ -37,6 +38,29 @@ class SchoolProfileController extends Controller
 
         $profile = $this->profile();
         $profile->fill($data)->save();
+
+        return response()->json(['data' => $profile->fresh()]);
+    }
+
+    /**
+     * Save the school brand colours. Only `pimpinan` may reach this route.
+     * Accepts either a preset or free-form hex values.
+     */
+    public function updateTheme(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'theme_primary' => ['required', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'theme_accent' => ['required', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+        ], [
+            'theme_primary.regex' => 'Warna utama harus berupa kode heksadesimal seperti #24634e.',
+            'theme_accent.regex' => 'Warna aksen harus berupa kode heksadesimal seperti #c88942.',
+        ]);
+
+        $profile = $this->profile();
+        $profile->fill([
+            'theme_primary' => strtolower($data['theme_primary']),
+            'theme_accent' => strtolower($data['theme_accent']),
+        ])->save();
 
         return response()->json(['data' => $profile->fresh()]);
     }

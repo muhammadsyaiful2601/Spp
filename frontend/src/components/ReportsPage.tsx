@@ -1,0 +1,158 @@
+import { ArrowUpRight, CalendarDays, Download, FileSpreadsheet, SlidersHorizontal } from "lucide-react";
+import type { Student, Transaction } from "../types";
+import { money } from "../lib/format";
+
+
+
+export function ReportsPage({
+  transactions,
+  students,
+  classLevels,
+  reportClass,
+  setReportClass,
+  onExport,
+}: {
+  transactions: Transaction[];
+  students: Student[];
+  classLevels: string[];
+  reportClass: string;
+  setReportClass: (value: string) => void;
+  onExport: (
+    format: "csv" | "pdf",
+    reportTransactions: Transaction[],
+    classFilter: string,
+  ) => Promise<void>;
+}) {
+  const filteredTransactions = transactions.filter(
+    (item) =>
+      reportClass === "Semua kelas" ||
+      students.some(
+        (student) =>
+          student.name === item.student && student.className === reportClass,
+      ),
+  );
+  const total = filteredTransactions.reduce(
+    (sum, item) => sum + item.amount,
+    0,
+  );
+  const average = filteredTransactions.length
+    ? Math.round(total / filteredTransactions.length)
+    : 0;
+  return (
+    <>
+      <section className="report-summary">
+        <article className="panel report-total">
+          <span>Total penerimaan tercatat</span>
+          <strong>
+            {money(total)}
+          </strong>
+          <small>
+            <ArrowUpRight size={14} /> 8,4% dari periode sebelumnya
+          </small>
+        </article>
+        <article className="panel report-total">
+          <span>Jumlah transaksi</span>
+          <strong>{String(filteredTransactions.length).padStart(2, "0")}</strong>
+          <small>Transaksi tahun ajaran ini</small>
+        </article>
+        <article className="panel report-total">
+          <span>Rata-rata per transaksi</span>
+          <strong>
+            {money(average)}
+          </strong>
+          <small>Seluruh pos pembayaran</small>
+        </article>
+      </section>
+      <section className="panel listing-panel">
+        <div className="list-toolbar">
+          <div>
+            <h2>Realisasi pembayaran</h2>
+            <p>Daftar transaksi tahun ajaran 2026 / 2027</p>
+          </div>
+          <div className="toolbar-controls">
+            <select
+              className="filter-select"
+              value={reportClass}
+              onChange={(event) => setReportClass(event.target.value)}
+            >
+              <option>Semua kelas</option>
+              {classLevels.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+            <button
+              className="button button-outline"
+              onClick={() => void onExport("csv", filteredTransactions, reportClass)}
+            >
+              <FileSpreadsheet size={16} /> Ekspor CSV
+            </button>
+            <button
+              className="button button-primary"
+              onClick={() => void onExport("pdf", filteredTransactions, reportClass)}
+            >
+              <Download size={16} /> Unduh PDF
+            </button>
+          </div>
+        </div>
+        <div className="report-filter-strip">
+          <span>
+            <CalendarDays size={15} /> Tahun ajaran:{" "}
+            <strong>2026 / 2027</strong>
+          </span>
+          <span>
+            <SlidersHorizontal size={15} /> Periode:{" "}
+            <strong>Semua bulan</strong>
+          </span>
+          <span className="report-record-count">
+            {filteredTransactions.length} transaksi sesuai filter
+          </span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>NO. TRANSAKSI</th>
+                <th>NAMA SISWA</th>
+                <th>RINCIAN</th>
+                <th>TANGGAL</th>
+                <th>JUMLAH</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTransactions.map((item, index) => (
+                <tr key={`${item.id}-${index}`}>
+                  <td>
+                    <span className="id-cell">{item.id}</span>
+                  </td>
+                  <td>
+                    <strong>{item.student}</strong>
+                  </td>
+                  <td>{item.detail}</td>
+                  <td className="muted-cell">{item.date}</td>
+                  <td className="amount-cell">{money(item.amount)}</td>
+                  <td>
+                    <span className="status-pill">
+                      <i /> Lunas
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="table-footer">
+          <span>
+            Menampilkan <strong>{filteredTransactions.length}</strong> transaksi
+            terbaru
+          </span>
+          <span>Data tersinkron secara real-time</span>
+        </div>
+      </section>
+    </>
+  );
+}
+
+export default ReportsPage;
