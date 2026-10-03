@@ -4,7 +4,15 @@
  */
 
 export type Page =
-  "dashboard" | "siswa" | "pembayaran" | "laporan" | "pengaturan" | "profil" | "akun";
+  | "dashboard"
+  | "siswa"
+  | "pembayaran"
+  | "laporan"
+  | "pengaturan"
+  | "profil"
+  | "bendahara"
+  | "log"
+  | "akun";
 
 export type Student = {
   id: string;

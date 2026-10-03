@@ -27,6 +27,10 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            // Without this the column arrives as a raw string and the resend
+            // throttle calls `->gt()` on it, which is a fatal error on the
+            // second request — the only path that reads the column at all.
+            'email_verification_sent_at' => 'datetime',
             'password' => 'hashed',
         ];
     }

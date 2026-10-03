@@ -39,7 +39,11 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
-            'scheme' => env('MAIL_SCHEME'),
+            // Symfony only accepts "smtp" and "smtps". "smtp" connects in plain
+            // text but upgrades via STARTTLS the moment the server offers it,
+            // which is what port 587 expects. "smtps" negotiates TLS up front
+            // and belongs on port 465.
+            'scheme' => env('MAIL_SCHEME', 'smtp'),
             'url' => env('MAIL_URL'),
             'host' => env('MAIL_HOST', '127.0.0.1'),
             'port' => env('MAIL_PORT', 2525),

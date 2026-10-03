@@ -27,6 +27,9 @@
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
+        <!-- The suite reads the emailed code out of the JSON response instead of
+             an inbox. Mirrors a developer running locally. -->
+        <env name="EMAIL_VERIFICATION_EXPOSE_CODE" value="true"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\SchoolProfile;
+use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -39,6 +40,13 @@ class SchoolProfileController extends Controller
         $profile = $this->profile();
         $profile->fill($data)->save();
 
+        ActivityLogger::record(
+            'profil_sekolah.ubah',
+            'profil_sekolah',
+            "Memperbarui identitas sekolah {$profile->school_name}.",
+            ['meta' => ['school_name' => $profile->school_name, 'receipt_template' => $profile->receipt_template]],
+        );
+
         return response()->json(['data' => $profile->fresh()]);
     }
 
@@ -61,6 +69,16 @@ class SchoolProfileController extends Controller
             'theme_primary' => strtolower($data['theme_primary']),
             'theme_accent' => strtolower($data['theme_accent']),
         ])->save();
+
+        ActivityLogger::record(
+            'profil_sekolah.tema',
+            'profil_sekolah',
+            "Mengubah warna tema portal menjadi {$profile->theme_primary} / {$profile->theme_accent}.",
+            ['meta' => [
+                'theme_primary' => $profile->theme_primary,
+                'theme_accent' => $profile->theme_accent,
+            ]],
+        );
 
         return response()->json(['data' => $profile->fresh()]);
     }
@@ -95,6 +113,12 @@ class SchoolProfileController extends Controller
             Storage::disk('public')->delete($profile->favicon_path);
             $profile->favicon_path = null;
             $profile->save();
+
+            ActivityLogger::record(
+                'profil_sekolah.favicon_hapus',
+                'profil_sekolah',
+                'Menghapus favicon portal.',
+            );
         }
 
         return response()->json(['data' => $profile->fresh()]);
@@ -109,7 +133,26 @@ class SchoolProfileController extends Controller
         $profile->{$column} = $request->file($field)->store('school-profile', 'public');
         $profile->save();
 
+        // The field name is the uploaded kind: logo, stamp or favicon.
+        ActivityLogger::record(
+            'profil_sekolah.berkas',
+            'profil_sekolah',
+            "Memperbarui berkas {$this->fileLabel($field)} profil sekolah.",
+            ['meta' => ['field' => $field, 'path' => $profile->{$column}]],
+        );
+
         return response()->json(['data' => $profile->fresh()]);
+    }
+
+    /** Indonesian name for an uploaded profile asset. */
+    private function fileLabel(string $field): string
+    {
+        return match ($field) {
+            'logo' => 'logo',
+            'stamp' => 'stempel',
+            'favicon' => 'favicon',
+            default => $field,
+        };
     }
 
     private function profile(): SchoolProfile

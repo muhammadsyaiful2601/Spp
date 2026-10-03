@@ -8,6 +8,9 @@ export type AuthUser = {
   name: string;
   email: string;
   role: "pimpinan" | "admin";
+  username: string;
+  /** Storage-relative path of the avatar; null when the user has no photo. */
+  photo_path: string | null;
 }
 
 // --- Session storage ------------------------------------------------------
@@ -130,6 +133,11 @@ export function isNetworkFailure(error: unknown): boolean {
 export type AccountDetails = AuthUser & {
   username: string
   created_at: string | null
+  /** Storage-relative path; null when the account uses initials. */
+  photo_path: string | null
+  /** False until the address is confirmed; the portal is gated until then. */
+  email_verified: boolean
+  email_verified_at: string | null
 }
 
 export async function fetchAccount(): Promise<AccountDetails> {
@@ -139,10 +147,83 @@ export async function fetchAccount(): Promise<AccountDetails> {
 
 export async function updateAccount(input: {
   name: string
+  username: string
   email: string
 }): Promise<AccountDetails> {
   const { data } = await api.post<{ data: AccountDetails }>("/auth/profile", input)
   return data.data
+}
+
+/** Replace the signed-in user's avatar. */
+export async function uploadProfilePhoto(file: File): Promise<AccountDetails> {
+  const form = new FormData()
+  form.append("photo", file)
+  const { data } = await api.post<{ data: AccountDetails }>("/auth/photo", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })
+  return data.data
+}
+
+/** Remove the avatar so initials are shown again. */
+export async function deleteProfilePhoto(): Promise<AccountDetails> {
+  const { data } = await api.delete<{ data: AccountDetails }>("/auth/photo")
+  return data.data
+}
+
+/** Client-side guard mirroring the server's `image` + 2 MB rule. */
+export function validatePhotoFile(file: File): string | null {
+  const allowed = ["image/png", "image/jpeg", "image/webp"]
+  if (!allowed.includes(file.type)) return "Gunakan gambar PNG, JPG, atau WebP."
+  if (file.size > 2 * 1024 * 1024) return "Ukuran foto maksimal 2 MB."
+  return null
+}
+
+/** Absolute URL for an avatar, or an empty string when there is none. */
+export function avatarUrl(photoPath: string | null | undefined): string {
+  return photoPath ? publicStorageUrl(photoPath) : ""
+}
+
+// --- Password recovery -----------------------------------------------------
+// These two are reachable without a session so a locked-out user can get back in.
+
+/**
+ * Ask for a reset code.
+ *
+ * The emailed code is deliberately not read from the response. Returning it to
+ * the browser puts the code on screen, in the DOM, and in any screenshot taken
+ * during support — and a leaked reset code hands over the account. Local
+ * testing reads the code from the inbox or the application log instead.
+ */
+export async function forgotPassword(identifier: string): Promise<void> {
+  await api.post("/auth/forgot-password", { identifier })
+}
+
+export async function resetPassword(input: {
+  token: string
+  password: string
+  password_confirmation: string
+}): Promise<void> {
+  await api.post("/auth/reset-password", input)
+}
+
+// --- Email verification ----------------------------------------------------
+
+/** Same reasoning as `forgotPassword`: the code stays out of the browser. */
+export async function sendVerificationCode(): Promise<void> {
+  await api.post("/auth/verification/send")
+}
+
+export async function verifyEmailCode(code: string): Promise<void> {
+  await api.post("/auth/verification/verify", { code })
+}
+
+/** True when the API refused an action because the address is unverified. */
+export function isUnverifiedError(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 403 &&
+    (error.response.data as { code?: string } | undefined)?.code === "email_unverified"
+  )
 }
 
 export async function changePassword(input: {
@@ -278,9 +359,279 @@ export type PortalData = {
   }
 }
 
-export async function fetchPortalData(): Promise<PortalData> {
-  const { data } = await api.get<{ data: PortalData }>('/data/portal')
+export type AcademicYear = {
+  id: number
+  name: string
+  start_year: number
+  end_year: number
+  is_active: boolean
+  /** Distinct students billed in this year. */
+  students_count: number
+  bills_count: number
+  received: number
+  /** False when the year has no SPP periods yet, so it would price at Rp 0. */
+  has_tariffs: boolean
+}
+
+export type CreateAcademicYearInput = {
+  start_year: number
+  end_year: number
+  /** Clone SPP periods and non-SPP tariffs from this existing year. */
+  copy_from?: number | null
+  is_active?: boolean
+}
+
+export async function fetchAcademicYears(): Promise<AcademicYear[]> {
+  const { data } = await api.get<{ data: AcademicYear[] }>('/data/tahun-ajaran')
   return data.data
+}
+
+export async function createAcademicYear(input: CreateAcademicYearInput): Promise<AcademicYear> {
+  const { data } = await api.post<{ data: AcademicYear }>('/pimpinan/tahun-ajaran', input)
+  return data.data
+}
+
+export async function activateAcademicYear(yearId: number): Promise<void> {
+  await api.post(`/pimpinan/tahun-ajaran/${yearId}/aktifkan`)
+}
+
+export async function fetchPortalData(academicYearId?: number | null): Promise<PortalData> {
+  // Omitting the id lets the server fall back to the active year.
+  const params = academicYearId ? { academic_year_id: academicYearId } : undefined
+  const { data } = await api.get<{ data: PortalData }>('/data/portal', { params })
+  return data.data
+}
+
+export type Treasurer = {
+  id: number
+  name: string
+  username: string
+  email: string
+  role: "admin"
+  is_active: boolean
+  created_at: string | null
+  /** Storage-relative avatar path, or null when the treasurer has no photo. */
+  photo_path: string | null
+  last_login_at: string | null
+}
+
+export type CreateTreasurerInput = {
+  name: string
+  username: string
+  email: string
+  password: string
+  password_confirmation: string
+}
+
+export async function fetchTreasurers(): Promise<Treasurer[]> {
+  const { data } = await api.get<{ data: Treasurer[] }>('/pimpinan/bendahara')
+  return data.data
+}
+
+export async function createTreasurer(input: CreateTreasurerInput): Promise<Treasurer> {
+  const { data } = await api.post<{ data: Treasurer }>('/pimpinan/bendahara', input)
+  return data.data
+}
+
+export async function updateTreasurer(
+  id: number,
+  input: { name: string; username: string; email: string },
+): Promise<Treasurer> {
+  const { data } = await api.put<{ data: Treasurer }>(`/pimpinan/bendahara/${id}`, input)
+  return data.data
+}
+
+export async function resetTreasurerPassword(
+  id: number,
+  password: string,
+  passwordConfirmation: string,
+): Promise<void> {
+  await api.post(`/pimpinan/bendahara/${id}/password`, {
+    password,
+    password_confirmation: passwordConfirmation,
+  })
+}
+
+export async function setTreasurerActive(id: number, isActive: boolean): Promise<Treasurer> {
+  const { data } = await api.post<{ data: Treasurer }>(`/pimpinan/bendahara/${id}/status`, {
+    is_active: isActive,
+  })
+  return data.data
+}
+
+export type SppPeriod = {
+  id: number
+  academic_year_id: number
+  class_level_id: number
+  name: string
+  month_start: number
+  month_end: number
+  monthly_amount: number
+  academic_year: string
+  class_level: string
+}
+
+export type PositionRate = {
+  id: number
+  payment_position_id: number
+  academic_year_id: number
+  class_level_id: number
+  amount: number
+  position: string
+  type: string
+  is_active: number | boolean
+  academic_year: string
+  class_level: string
+}
+
+export async function fetchSppPeriods(academicYearId?: number | null): Promise<SppPeriod[]> {
+  const params = academicYearId ? { academic_year_id: academicYearId } : undefined
+  const { data } = await api.get<{ data: SppPeriod[] }>('/pimpinan/tarif-spp', { params })
+  return data.data
+}
+
+export async function fetchPositionRates(): Promise<PositionRate[]> {
+  const { data } = await api.get<{ data: PositionRate[] }>('/pimpinan/tarif-non-spp')
+  return data.data
+}
+
+/** Save one nominal per class; the server applies it to both semesters. */
+export async function saveSppRates(
+  academicYearId: number,
+  rates: { class_level_id: number; monthly_amount: number }[],
+): Promise<void> {
+  await api.post('/pimpinan/tarif-spp', { academic_year_id: academicYearId, rates })
+}
+
+export async function savePositionRates(input: {
+  academic_year_id: number
+  class_level_id: number
+  positions: {
+    payment_position_id: number
+    amount: number
+    is_active?: boolean
+  }[]
+}): Promise<void> {
+  await api.post('/pimpinan/tarif-non-spp', input)
+}
+
+export async function createPosition(input: {
+  name: string
+  type: string
+  amount: number
+  academic_year_id: number
+}): Promise<{ id: number; name: string }> {
+  const { data } = await api.post<{ data: { id: number; name: string } }>(
+    '/pimpinan/pos-biaya',
+    input,
+  )
+  return data.data
+}
+
+// --- Activity log (audit trail) --------------------------------------------
+export type ActivityLogActor = {
+  id: number | null
+  name: string | null
+  username: string | null
+  role: string | null
+  role_label: string
+}
+
+export type ActivityLogEntry = {
+  id: number
+  action: string
+  category: string
+  category_label: string
+  description: string
+  actor: ActivityLogActor
+  /** The student/account the action was performed on, when it has one target. */
+  subject: { type: string; id: number | null; label: string | null } | null
+  /** Raw values (amounts, months, ...) that the page formats for display. */
+  details: Record<string, unknown>
+  ip_address: string | null
+  created_at: string | null
+}
+
+export type ActivityLogCategory = { value: string; label: string }
+
+export type ActivityLogResult = {
+  entries: ActivityLogEntry[]
+  page: number
+  perPage: number
+  total: number
+  lastPage: number
+  summary: {
+    total: number
+    today: number
+    actors: number
+    filtered: number
+    byCategory: Record<string, number>
+  }
+  categories: ActivityLogCategory[]
+}
+
+export type ActivityLogFilters = {
+  search?: string
+  category?: string
+  from?: string
+  to?: string
+  page?: number
+  perPage?: number
+}
+
+/**
+ * Read one page of the audit trail.
+ *
+ * `pimpinan` only — the server answers 403 for any other role, and the sidebar
+ * link is hidden for them too. Blank filters are dropped so the request never
+ * carries `category=undefined`.
+ */
+export async function fetchActivityLogs(
+  filters: ActivityLogFilters = {},
+): Promise<ActivityLogResult> {
+  const params: Record<string, string | number> = {}
+  if (filters.search?.trim()) params.search = filters.search.trim()
+  if (filters.category) params.category = filters.category
+  if (filters.from) params.from = filters.from
+  if (filters.to) params.to = filters.to
+  if (filters.page) params.page = filters.page
+  if (filters.perPage) params.per_page = filters.perPage
+
+  const { data } = await api.get<{
+    data: ActivityLogEntry[]
+    meta: { page: number; per_page: number; total: number; last_page: number }
+    summary: {
+      total: number
+      today: number
+      actors: number
+      filtered: number
+      by_category: Record<string, number | string>
+    }
+    categories: ActivityLogCategory[]
+  }>('/pimpinan/log-aktivitas', { params })
+
+  return {
+    entries: data.data,
+    page: data.meta.page,
+    perPage: data.meta.per_page,
+    total: data.meta.total,
+    lastPage: data.meta.last_page,
+    summary: {
+      total: data.summary.total,
+      today: data.summary.today,
+      actors: data.summary.actors,
+      filtered: data.summary.filtered,
+      // The database driver decides whether a COUNT arrives as a number or a
+      // string, so the totals are coerced once, here.
+      byCategory: Object.fromEntries(
+        Object.entries(data.summary.by_category).map(([key, value]) => [
+          key,
+          Number(value),
+        ]),
+      ),
+    },
+    categories: data.categories,
+  }
 }
 
 // --- Theme colour helpers -------------------------------------------------

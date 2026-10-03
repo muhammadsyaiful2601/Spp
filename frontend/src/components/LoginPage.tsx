@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { MosqueMark, StarMotif } from "./icons";
 
 
@@ -9,11 +9,13 @@ export function LoginPage({
   logo,
   error,
   onSubmit,
+  onForgotPassword,
 }: {
   school: string;
   logo: string;
   error: string;
   onSubmit: (username: string, password: string) => Promise<void>;
+  onForgotPassword: () => void;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -106,6 +108,9 @@ export function LoginPage({
               <ArrowRight size={17} />
             </button>
           </form>
+          <button className="login-link" type="button" onClick={onForgotPassword}>
+            <KeyRound size={13} /> Lupa kata sandi?
+          </button>
           <div className="login-secure"><ShieldCheck size={15} /><span>Akses aman · sesi berakhir saat tab ditutup</span></div>
         </div>
         <footer className="login-footer"><span>© 2026 {school}</span><span>Butuh bantuan? Hubungi administrator sekolah.</span></footer>

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -39,7 +40,25 @@ class StudentController extends Controller
         ]);
         $id = DB::table('students')->insertGetId(array_merge($data, ['created_at' => now(), 'updated_at' => now()]));
 
-        return response()->json(['data' => DB::table('students')->where('students.id', $id)->join('class_levels', 'class_levels.id', '=', 'students.class_level_id')->select('students.*', 'class_levels.name as class_level')->first()], 201);
+        $student = DB::table('students')->where('students.id', $id)->join('class_levels', 'class_levels.id', '=', 'students.class_level_id')->select('students.*', 'class_levels.name as class_level')->first();
+
+        ActivityLogger::record(
+            'siswa.tambah',
+            'siswa',
+            "Menambah siswa {$student->full_name} ({$student->class_level}).",
+            [
+                'subject_type' => 'student',
+                'subject_id' => $id,
+                'subject_label' => $student->full_name,
+                'meta' => [
+                    'nisn' => $student->nisn,
+                    'student_number' => $student->student_number,
+                    'class_level' => $student->class_level,
+                ],
+            ],
+        );
+
+        return response()->json(['data' => $student], 201);
     }
 
     public function bills(Request $request, int $student): JsonResponse

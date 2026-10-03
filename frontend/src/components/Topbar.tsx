@@ -1,36 +1,54 @@
 import type { Notice, Page } from "../types";
 import type { formatToday } from "../lib/format";
 import { noticeIconMap } from "../lib/notices";
-import type { AuthUser } from "../api";
-import { ArrowRight, Bell, CalendarDays, CheckCheck, ChevronDown, ChevronRight, Clock, Menu } from "lucide-react";
+import type { AcademicYear, AuthUser } from "../api";
+import { ArrowRight, Bell, CalendarDays, CheckCheck, ChevronRight, Clock, Menu } from "lucide-react";
+import AcademicYearSwitcher from "./AcademicYearSwitcher";
+import Avatar from "./Avatar";
 
 export function Topbar({
-  academicYear,
+  academicYears,
+  canManageYears,
   currentUser,
   markAllNoticesRead,
   noticeOpen,
   noticeRef,
   notices,
+  onCreateYear,
+  onActivate,
+  onSelectYear,
   openNotice,
   page,
   pageTitles,
+  portalQuerying,
   readNotices,
+  selectedYearId,
   setMobileNav,
   setNoticeOpen,
   setPage,
   today,
   unreadCount,
 }: {
-  academicYear: string;
+  academicYears: AcademicYear[];
+  canManageYears: boolean;
   currentUser: AuthUser;
   markAllNoticesRead: () => void;
   noticeOpen: boolean;
   noticeRef: React.RefObject<HTMLDivElement | null>;
   notices: Notice[];
+  onCreateYear: (input: {
+    startYear: number;
+    endYear: number;
+    copyFrom: number | null;
+  }) => Promise<void>;
+  onActivate: (yearId: number) => Promise<void>;
+  onSelectYear: (yearId: number) => void;
   openNotice: (notice: Notice) => void;
   page: Page;
   pageTitles: Record<Page, string>;
+  portalQuerying: boolean;
   readNotices: string[];
+  selectedYearId: number | null;
   setMobileNav: (value: boolean) => void;
   setNoticeOpen: (value: boolean) => void;
   setPage: (page: Page) => void;
@@ -61,9 +79,15 @@ export function Topbar({
                   </small>
                 </span>
               </span>
-              <span className="academic-year">
-                {academicYear} <ChevronDown size={14} />
-              </span>
+              <AcademicYearSwitcher
+                academicYears={academicYears}
+                canManage={canManageYears}
+                onCreate={onCreateYear}
+                onActivate={onActivate}
+                onSelect={onSelectYear}
+                selectedId={selectedYearId}
+                busy={portalQuerying}
+              />
               <div className="notice-anchor" ref={noticeRef}>
                 <button
                   className={`icon-button notification-button ${noticeOpen ? "is-open" : ""}`}
@@ -146,7 +170,11 @@ export function Topbar({
                   </div>
                 )}
               </div>
-              <div className="top-avatar">{currentUser.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}</div>
+              <Avatar
+                className="top-avatar"
+                name={currentUser.name}
+                photoPath={currentUser.photo_path}
+              />
             </div>
           </header>
   );

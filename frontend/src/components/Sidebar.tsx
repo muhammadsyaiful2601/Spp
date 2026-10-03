@@ -6,6 +6,7 @@ export type NavGroup = { label: string; links: NavLink[] };
 import type { AuthUser } from "../api";
 import { ChevronDown, LogOut, Sparkles, X } from "lucide-react";
 import { MosqueMark, StarMotif } from "./icons";
+import Avatar from "./Avatar";
 
 export function Sidebar({
   currentUser,
@@ -95,12 +96,17 @@ export function Sidebar({
                 aria-current={page === "akun" ? "page" : undefined}
                 title="Buka akun saya"
               >
-                <span className="user-avatar">
-                  {currentUser.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}
-                </span>
+                <Avatar
+                  className="user-avatar"
+                  name={currentUser.name}
+                  photoPath={currentUser.photo_path}
+                />
                 <span className="user-profile-text">
                   <strong>{currentUser.name}</strong>
-                  <span>{currentUser.role === "pimpinan" ? "Pimpinan" : "Admin Keuangan"}</span>
+                  <span>
+                    @{currentUser.username} ·{" "}
+                    {currentUser.role === "pimpinan" ? "Pimpinan" : "Bendahara"}
+                  </span>
                 </span>
               </button>
               <button

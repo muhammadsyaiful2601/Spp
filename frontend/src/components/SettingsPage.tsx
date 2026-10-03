@@ -1,31 +1,90 @@
 import { useState } from "react";
-import { Banknote, BookOpenCheck, Check, CircleDollarSign, Plus, Sparkles } from "lucide-react";
+import {
+  Banknote,
+  BookOpenCheck,
+  Check,
+  CircleDollarSign,
+  Loader2,
+  Plus,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { months } from "../constants";
 
+/** A per-class SPP row the leadership user is editing. */
+export type SppRow = { classLevelId: number; className: string; amount: number };
 
+/** A non-SPP position row for one class level. */
+export type CostRow = {
+  paymentPositionId: number;
+  name: string;
+  type: string;
+  amount: number;
+  isActive: boolean;
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  sekali_bayar: "Sekali bayar",
+  tahunan: "Tahunan",
+  cicilan: "Cicilan",
+};
 
 export function SettingsPage({
+  academicYearLabel,
   activeTab,
+  busy,
+  costClassId,
+  costClassLevels,
+  costRows,
+  error,
+  lastSavedAt,
+  onAddPosition,
+  onCostAmountChange,
+  onSaveCosts,
+  onSaveSpp,
+  onSetCostClass,
+  onSppAmountChange,
+  onTogglePosition,
   setActiveTab,
-  sppAmounts,
-  setSppAmounts,
-  costs,
+  sppRows,
 }: {
+  academicYearLabel: string;
   activeTab: "spp" | "biaya";
+  busy: boolean;
+  costClassId: number | null;
+  costClassLevels: { id: number; name: string }[];
+  costRows: CostRow[];
+  error: string;
+  lastSavedAt: string | null;
+  onAddPosition: (input: { name: string; type: string; amount: number }) => void;
+  onCostAmountChange: (paymentPositionId: number, amount: number) => void;
+  onSaveCosts: () => void;
+  onSaveSpp: () => void;
+  onSetCostClass: (classLevelId: number) => void;
+  onSppAmountChange: (classLevelId: number, amount: number) => void;
+  onTogglePosition: (row: CostRow, next: boolean) => void;
   setActiveTab: (value: "spp" | "biaya") => void;
-  sppAmounts: number[];
-  setSppAmounts: React.Dispatch<React.SetStateAction<number[]>>;
-  costs: { name: string; type: string; amount: number }[];
+  sppRows: SppRow[];
 }) {
-  const [amounts, setAmounts] = useState(costs.map((cost) => cost.amount));
-  const [saved, setSaved] = useState(false);
-  const [syncedFrom, setSyncedFrom] = useState(costs);
-  // Reset the editable copy when the server returns a new tariff list. This is
-  // the documented "adjust state during render" pattern instead of an effect.
-  if (syncedFrom !== costs) {
-    setSyncedFrom(costs);
-    setAmounts(costs.map((cost) => cost.amount));
-  }
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ name: "", type: "tahunan", amount: "" });
+
+  const lastSaved = lastSavedAt
+    ? new Date(lastSavedAt).toLocaleString("id-ID", {
+        dateStyle: "long",
+        timeStyle: "short",
+      })
+    : null;
+
+  const canAdd = draft.name.trim().length > 0 && draft.amount !== "" && Number(draft.amount) >= 0;
+
+  const submitNewPosition = () => {
+    if (!canAdd) return;
+    onAddPosition({ name: draft.name.trim(), type: draft.type, amount: Number(draft.amount) });
+    setDraft({ name: "", type: "tahunan", amount: "" });
+    setAdding(false);
+  };
+
   return (
     <section className="panel settings-panel">
       <div className="settings-tabs">
@@ -42,11 +101,12 @@ export function SettingsPage({
           <CircleDollarSign size={16} /> Biaya non-SPP
         </button>
       </div>
+      {error && <p className="form-error settings-error">{error}</p>}
       {activeTab === "spp" ? (
         <div className="settings-content">
           <div className="settings-title">
             <div>
-              <span className="eyebrow">TAHUN AJARAN 2026 / 2027</span>
+              <span className="eyebrow">TAHUN AJARAN {academicYearLabel}</span>
               <h2>Tarif SPP per tingkat kelas</h2>
               <p>Nominal berlaku untuk periode semester ganjil dan genap.</p>
             </div>
@@ -92,45 +152,41 @@ export function SettingsPage({
               <span>NOMINAL PER BULAN</span>
               <span>STATUS</span>
             </div>
-            {[
-              "Kelas I",
-              "Kelas II",
-              "Kelas III",
-              "Kelas IV",
-              "Kelas V",
-              "Kelas VI",
-            ].map((className, index) => (
-              <div className="tariff-row" key={className}>
-                <span>
-                  <div className={`class-emblem emblem-${index % 3}`}>
-                    {["I", "II", "III", "IV", "V", "VI"][index]}
-                  </div>
-                  <strong>{className}</strong>
-                </span>
-                <label className="money-input">
-                  <span>Rp</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="10000"
-                    value={sppAmounts[index] ?? sppAmounts[0]}
-                    onChange={(event) =>
-                      setSppAmounts((current) =>
-                        current.map((amount, itemIndex) =>
-                          itemIndex === index
-                            ? Number(event.target.value)
-                            : amount,
-                        ),
-                      )
-                    }
-                    aria-label={`Tarif SPP ${className}`}
-                  />
-                </label>
-                <span className="active-badge">
-                  <i /> Aktif
+            {sppRows.length === 0 ? (
+              <div className="tariff-row">
+                <span className="metric-caption">
+                  Belum ada tingkat kelas. Tambahkan kelas terlebih dahulu.
                 </span>
               </div>
-            ))}
+            ) : (
+              sppRows.map((row, index) => (
+                <div className="tariff-row" key={row.classLevelId}>
+                  <span>
+                    <div className={`class-emblem emblem-${index % 3}`}>
+                      {String(index + 1).padStart(2, "0")}
+                    </div>
+                    <strong>{row.className}</strong>
+                  </span>
+                  <label className="money-input">
+                    <span>Rp</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="10000"
+                      value={row.amount}
+                      onChange={(event) =>
+                        onSppAmountChange(row.classLevelId, Number(event.target.value))
+                      }
+                      aria-label={`Tarif SPP ${row.className}`}
+                      disabled={busy}
+                    />
+                  </label>
+                  <span className="active-badge">
+                    <i /> Aktif
+                  </span>
+                </div>
+              ))
+            )}
           </div>
           <div className="settings-tip">
             <Sparkles size={17} />
@@ -140,13 +196,16 @@ export function SettingsPage({
             </span>
           </div>
           <div className="settings-actions">
-            <span>Terakhir diperbarui 28 September 2026</span>
+            <span>
+              {lastSaved ? `Terakhir disimpan ${lastSaved}` : "Belum ada perubahan tersimpan."}
+            </span>
             <button
               className="button button-primary"
-              onClick={() => setSaved(true)}
+              onClick={onSaveSpp}
+              disabled={busy || sppRows.length === 0}
             >
-              <Check size={16} />{" "}
-              {saved ? "Perubahan tersimpan" : "Simpan pengaturan"}
+              {busy ? <Loader2 size={16} className="spin" /> : <Check size={16} />}
+              Simpan pengaturan
             </button>
           </div>
         </div>
@@ -158,56 +217,142 @@ export function SettingsPage({
               <h2>Tarif biaya non-SPP</h2>
               <p>Kelola nominal dan tipe pembayaran untuk setiap pos biaya.</p>
             </div>
-            <button className="button button-outline">
-              <Plus size={15} /> Tambah pos
+            <button
+              type="button"
+              className={`button ${adding ? "" : "button-outline"}`}
+              onClick={() => setAdding((value) => !value)}
+            >
+              {adding ? <X size={15} /> : <Plus size={15} />}
+              {adding ? "Batal" : "Tambah pos"}
             </button>
           </div>
-          <div className="cost-list">
-            {costs.map((cost, index) => (
-              <article className="cost-row" key={cost.name}>
-                <div className="cost-icon">
-                  <Banknote size={17} />
-                </div>
-                <div className="cost-name">
-                  <strong>{cost.name}</strong>
-                  <span>{cost.type}</span>
-                </div>
-                <label className="money-input">
-                  <span>Rp</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="10000"
-                    value={amounts[index]}
-                    onChange={(event) =>
-                      setAmounts((items) =>
-                        items.map((value, itemIndex) =>
-                          itemIndex === index
-                            ? Number(event.target.value)
-                            : value,
-                        ),
-                      )
-                    }
-                    aria-label={`Tarif ${cost.name}`}
-                  />
-                </label>
-                <button
-                  className="switch-control on"
-                  aria-label={`${cost.name} aktif`}
+
+          {adding && (
+            <form
+              className="treasurer-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitNewPosition();
+              }}
+            >
+              <label>
+                <span>Nama pos biaya</span>
+                <input
+                  value={draft.name}
+                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                  required
+                  maxLength={100}
+                />
+              </label>
+              <label>
+                <span>Tipe pembayaran</span>
+                <select
+                  value={draft.type}
+                  onChange={(event) => setDraft({ ...draft, type: event.target.value })}
                 >
-                  <i />
+                  {Object.entries(TYPE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Nominal</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="10000"
+                  value={draft.amount}
+                  onChange={(event) => setDraft({ ...draft, amount: event.target.value })}
+                  required
+                />
+              </label>
+              <div className="treasurer-form-actions">
+                <button
+                  type="submit"
+                  className="button button-primary"
+                  disabled={busy || !canAdd}
+                >
+                  {busy ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
+                  Simpan pos
                 </button>
-              </article>
-            ))}
+              </div>
+            </form>
+          )}
+
+          {costClassLevels.length > 0 && (
+            <label className="cost-class-picker">
+              <span>Tingkat kelas</span>
+              <select
+                value={costClassId ?? ""}
+                onChange={(event) => onSetCostClass(Number(event.target.value))}
+                disabled={busy}
+              >
+                {costClassLevels.map((level) => (
+                  <option key={level.id} value={level.id}>
+                    {level.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <div className="cost-list">
+            {costRows.length === 0 ? (
+              <p className="metric-caption">Belum ada pos biaya.</p>
+            ) : (
+              costRows.map((row) => (
+                <article
+                  className={`cost-row ${row.isActive ? "" : "is-off"}`}
+                  key={row.paymentPositionId}
+                >
+                  <div className="cost-icon">
+                    <Banknote size={17} />
+                  </div>
+                  <div className="cost-name">
+                    <strong>{row.name}</strong>
+                    <span>{TYPE_LABELS[row.type] ?? row.type}</span>
+                  </div>
+                  <label className="money-input">
+                    <span>Rp</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="10000"
+                      value={row.amount}
+                      onChange={(event) =>
+                        onCostAmountChange(row.paymentPositionId, Number(event.target.value))
+                      }
+                      aria-label={`Tarif ${row.name}`}
+                      disabled={busy}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className={`switch-control ${row.isActive ? "on" : ""}`}
+                    aria-label={`${row.name} ${row.isActive ? "aktif" : "nonaktif"}`}
+                    aria-pressed={row.isActive}
+                    disabled={busy}
+                    onClick={() => onTogglePosition(row, !row.isActive)}
+                  >
+                    <i />
+                  </button>
+                </article>
+              ))
+            )}
           </div>
           <div className="settings-actions">
-            <span>Tarif dapat dibedakan untuk tiap tingkat kelas.</span>
+            <span>
+              Tarif disimpan untuk tingkat kelas terpilih dan berlaku di semua pos.
+            </span>
             <button
               className="button button-primary"
-              onClick={() => setSaved(true)}
+              onClick={onSaveCosts}
+              disabled={busy || costRows.length === 0 || costClassId === null}
             >
-              <Check size={16} />{" "}
-              {saved ? "Perubahan tersimpan" : "Simpan pengaturan"}
+              {busy ? <Loader2 size={16} className="spin" /> : <Check size={16} />}
+              Simpan pengaturan
             </button>
           </div>
         </div>

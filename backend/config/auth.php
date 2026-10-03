@@ -92,6 +92,27 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Email verification
+    |--------------------------------------------------------------------------
+    |
+    | How long an emailed six-digit code stays usable, and the cooldown before a
+    | replacement may be requested for the same address.
+    |
+    */
+
+    'verification' => [
+        'code_ttl_minutes' => (int) env('EMAIL_VERIFICATION_TTL', 30),
+        'resend_cooldown_minutes' => (int) env('EMAIL_VERIFICATION_RESEND_COOLDOWN', 2),
+
+        // Echo the emailed code back in the API response so the flow can be
+        // tested without an inbox. Off by default in every environment: on a
+        // reachable server this hands out the code that verifies the account,
+        // so it must be enabled deliberately, never inherited by accident.
+        'expose_codes_in_response' => (bool) env('EMAIL_VERIFICATION_EXPOSE_CODE', false),
+    ],
+
     'passwords' => [
         'users' => [
             'provider' => 'users',

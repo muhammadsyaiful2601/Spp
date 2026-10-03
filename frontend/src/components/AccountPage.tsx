@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Check, Clock, LogOut, RefreshCw, ShieldCheck, UserCog } from "lucide-react";
+import { Camera, Check, Clock, LogOut, RefreshCw, ShieldCheck, Trash2, UserCog } from "lucide-react";
 import type { AuthUser, AccountDetails } from "../api";
+import Avatar from "./Avatar";
 
 
 
@@ -15,6 +16,10 @@ export function AccountPage({
   onSave,
   onChangePassword,
   onLogout,
+  onUploadPhoto,
+  onRemovePhoto,
+  photoBusy = false,
+  photoError = "",
 }: {
   account?: AccountDetails;
   fallback: AuthUser;
@@ -23,13 +28,17 @@ export function AccountPage({
   error: string;
   passwordError: string;
   passwordNotice: string;
-  onSave: (name: string, email: string) => void;
+  onSave: (name: string, username: string, email: string) => void;
   onChangePassword: (input: {
     current_password: string;
     password: string;
     password_confirmation: string;
   }) => void;
   onLogout: () => void;
+  onUploadPhoto: (file: File) => void;
+  onRemovePhoto: () => void;
+  photoBusy: boolean;
+  photoError: string;
 }) {
   // Until `/auth/me` resolves, render from the session copy so the page is never
   // blank. `username` is only a placeholder until the server value arrives.
@@ -38,20 +47,19 @@ export function AccountPage({
     name: fallback.name,
     email: fallback.email,
     role: fallback.role,
-    username: fallback.name.toLowerCase().replace(/\s+/g, "."),
+    username: fallback.username,
     created_at: null,
+    photo_path: fallback.photo_path,
+    // Assume verified until `/auth/me` resolves, so a normal session is never
+    // flashed to a "please verify" screen.
+    email_verified: true,
+    email_verified_at: null,
   };
-  const initials = user.name
-    .split(" ")
-    .map((part) => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
   const roleLabel =
-    user.role === "pimpinan" ? "Pimpinan Sekolah" : "Admin Keuangan";
+    user.role === "pimpinan" ? "Pimpinan Sekolah" : "Bendahara";
 
   const [name, setName] = useState(user.name);
+  const [username, setUsername] = useState(user.username);
   const [email, setEmail] = useState(user.email);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -64,9 +72,12 @@ export function AccountPage({
     setSyncedWith(user.email);
     setName(user.name);
     setEmail(user.email);
+    setUsername(user.username);
   }
 
-  const dirty = name !== user.name || email !== user.email;
+  const dirty =
+    name !== user.name || email !== user.email || username !== user.username;
+  const usernameValid = /^[A-Za-z0-9_-]{3,100}$/.test(username);
   const joined = user.created_at
     ? new Date(user.created_at).toLocaleDateString("id-ID", {
         day: "numeric",
@@ -77,8 +88,8 @@ export function AccountPage({
 
   function submitProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!dirty) return;
-    onSave(name.trim(), email.trim());
+    if (!dirty || !usernameValid) return;
+    onSave(name.trim(), username.trim(), email.trim());
   }
 
   function submitPassword(event: React.FormEvent<HTMLFormElement>) {
@@ -120,7 +131,27 @@ export function AccountPage({
         </div>
 
         <div className="account-hero">
-          <div className="account-hero-avatar">{initials}</div>
+          <div className="account-hero-avatar-wrap">
+            <Avatar
+              className="account-hero-avatar"
+              name={user.name}
+              photoPath={user.photo_path}
+            />
+            <label className="account-avatar-upload" title="Ganti foto profil">
+              <Camera size={13} />
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={photoBusy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  // Reset so re-picking the same file still fires a change event.
+                  event.target.value = "";
+                  if (file) onUploadPhoto(file);
+                }}
+              />
+            </label>
+          </div>
           <div className="account-hero-text">
             <strong>{user.name}</strong>
             <span>{roleLabel}</span>
@@ -130,8 +161,23 @@ export function AccountPage({
                 {user.role === "pimpinan" ? "Akses penuh" : "Akses operasional"}
               </span>
             </div>
+            {user.photo_path && (
+              <button
+                type="button"
+                className="account-avatar-remove"
+                disabled={photoBusy}
+                onClick={onRemovePhoto}
+              >
+                <Trash2 size={12} /> Hapus foto
+              </button>
+            )}
           </div>
         </div>
+        {(photoError ?? "") !== "" && (
+          <p className="login-error" role="alert">
+            {photoError}
+          </p>
+        )}
 
         <form className="account-form" onSubmit={submitProfile}>
           <div className="form-grid">
@@ -157,10 +203,21 @@ export function AccountPage({
               />
             </div>
             <div className="form-field full">
-              <label htmlFor="account-username">Username</label>
-              <input id="account-username" value={user.username} readOnly />
+              <label htmlFor="account-username">Username untuk masuk</label>
+              <input
+                id="account-username"
+                value={username}
+                disabled={loading || busy}
+                onChange={(event) => setUsername(event.target.value)}
+                pattern="[A-Za-z0-9_-]+"
+                minLength={3}
+                maxLength={100}
+                required
+              />
               <small className="field-hint">
-                Username hanya dapat diubah oleh pimpinan sekolah.
+                {usernameValid
+                  ? "Dipakai saat login. Hanya huruf, angka, tanda hubung, dan garis bawah."
+                  : "Minimal 3 karakter, tanpa spasi atau titik."}
               </small>
             </div>
           </div>

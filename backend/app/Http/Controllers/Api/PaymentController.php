@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -72,6 +73,25 @@ class PaymentController extends Controller
             return DB::table('payment_transactions')->find($transactionId);
         });
 
+        $studentName = (string) DB::table('students')->where('id', $data['student_id'])->value('full_name');
+
+        ActivityLogger::record(
+            'pembayaran.spp',
+            'pembayaran',
+            "Mencatat pembayaran SPP untuk {$studentName} (".count($data['months']).' bulan).',
+            [
+                'subject_type' => 'student',
+                'subject_id' => $data['student_id'],
+                'subject_label' => $studentName,
+                // Raw values only: the client owns currency and period formatting.
+                'meta' => [
+                    'transaction_number' => $transaction->transaction_number,
+                    'amount' => (float) $transaction->amount,
+                    'months' => $data['months'],
+                ],
+            ],
+        );
+
         return response()->json(['data' => $transaction], 201);
     }
 
@@ -123,6 +143,28 @@ class PaymentController extends Controller
 
             return DB::table('payment_transactions')->find($id);
         });
+
+        $studentName = (string) DB::table('students')->where('id', $data['student_id'])->value('full_name');
+        $positionName = (string) DB::table('position_rates')
+            ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+            ->where('position_rates.id', $data['position_rate_id'])
+            ->value('payment_positions.name');
+
+        ActivityLogger::record(
+            'pembayaran.non_spp',
+            'pembayaran',
+            "Mencatat pembayaran non-SPP {$positionName} untuk {$studentName}.",
+            [
+                'subject_type' => 'student',
+                'subject_id' => $data['student_id'],
+                'subject_label' => $studentName,
+                'meta' => [
+                    'transaction_number' => $transaction->transaction_number,
+                    'position' => $positionName,
+                    'amount' => (float) $transaction->amount,
+                ],
+            ],
+        );
 
         return response()->json(['data' => $transaction], 201);
     }

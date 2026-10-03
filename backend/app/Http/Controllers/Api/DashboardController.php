@@ -19,6 +19,16 @@ class DashboardController extends Controller
     {
         $yearId = $request->integer('academic_year_id') ?: DB::table('academic_years')->where('is_active', true)->value('id');
 
+        // A bogus id would reach summary()/monthlyRevenue() and dereference a null
+        // year, so reject it up front with a clear message instead.
+        if ($request->filled('academic_year_id')) {
+            abort_unless(
+                DB::table('academic_years')->where('id', $yearId)->exists(),
+                422,
+                'Tahun ajaran tidak ditemukan.',
+            );
+        }
+
         return response()->json(['data' => [
             'academic_year' => $yearId ? DB::table('academic_years')->where('id', $yearId)->first() : null,
             'class_levels' => DB::table('class_levels')->orderBy('sort_order')->get(['id', 'name', 'sort_order']),

@@ -15,6 +15,7 @@ export function ProfilePage({
   onSaveTheme,
   themeBusy,
   onSave,
+  verification,
 }: {
   profile: Profile;
   setProfile: React.Dispatch<React.SetStateAction<Profile>>;
@@ -25,10 +26,13 @@ export function ProfilePage({
   onSaveTheme: (primary: string, accent: string) => void;
   themeBusy: boolean;
   onSave: () => void;
+  /** Rendered above the school identity form; null hides it. */
+  verification?: React.ReactNode;
 }) {
   const activeFavicon = profile.favicon || profile.logo;
   return (
     <div className="profile-layout">
+      {verification}
       <section className="panel profile-form">
         <div className="panel-heading">
           <div>

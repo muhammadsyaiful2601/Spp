@@ -1,4 +1,11 @@
-import { ArrowUpRight, CalendarDays, Download, FileSpreadsheet, SlidersHorizontal } from "lucide-react";
+import {
+  ArrowUpRight,
+  CalendarDays,
+  Download,
+  FileSpreadsheet,
+  Loader2,
+  SlidersHorizontal,
+} from "lucide-react";
 import type { Student, Transaction } from "../types";
 import { money } from "../lib/format";
 
@@ -11,6 +18,7 @@ export function ReportsPage({
   reportClass,
   setReportClass,
   onExport,
+  busy = false,
 }: {
   transactions: Transaction[];
   students: Student[];
@@ -22,6 +30,14 @@ export function ReportsPage({
     reportTransactions: Transaction[],
     classFilter: string,
   ) => Promise<void>;
+  /**
+   * An export is already running.
+   *
+   * Building a PDF takes long enough that the button itself has to say so. It
+   * used to raise a full-screen splash for this, which was worse than the wait:
+   * the report the user was reading vanished and came back a moment later.
+   */
+  busy?: boolean;
 }) {
   const filteredTransactions = transactions.filter(
     (item) =>
@@ -85,14 +101,26 @@ export function ReportsPage({
             <button
               className="button button-outline"
               onClick={() => void onExport("csv", filteredTransactions, reportClass)}
+              disabled={busy}
             >
-              <FileSpreadsheet size={16} /> Ekspor CSV
+              {busy ? (
+                <Loader2 size={16} className="spin" />
+              ) : (
+                <FileSpreadsheet size={16} />
+              )}
+              Ekspor CSV
             </button>
             <button
               className="button button-primary"
               onClick={() => void onExport("pdf", filteredTransactions, reportClass)}
+              disabled={busy}
             >
-              <Download size={16} /> Unduh PDF
+              {busy ? (
+                <Loader2 size={16} className="spin" />
+              ) : (
+                <Download size={16} />
+              )}
+              Unduh PDF
             </button>
           </div>
         </div>

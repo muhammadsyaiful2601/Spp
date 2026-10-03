@@ -13,6 +13,19 @@ export function readLocal<T>(key: string, fallback: T): T {
 }
 
 /**
+ * Persist a small UI preference (currently the chosen academic year) so the app
+ * reopens on the same scope. Failures are ignored because storage can be
+ * unavailable in private mode and losing this preference is not fatal.
+ */
+export function writeLocal(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Read a cached profile and merge it over the current defaults. A cache written
  * before the theme feature exists has no `themePrimary`, so merging keeps the
  * stored branding while backfilling anything new.

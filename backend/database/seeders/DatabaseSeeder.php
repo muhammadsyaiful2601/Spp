@@ -21,18 +21,45 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
-        User::updateOrCreate(['username' => 'pimpinan'], [
-            'name' => 'Pimpinan Sekolah',
-            'email' => 'pimpinan@example.test',
-            'password' => Hash::make('password'),
-            'role' => 'pimpinan',
-        ]);
-
-        User::updateOrCreate(['username' => 'admin'], [
+        // Deliberately left unverified (`email_verified_at` stays NULL).
+        //
+        // Seeded accounts carry a placeholder address like `admin@example.test`,
+        // which cannot receive mail. Marking them verified would hand out a
+        // ready-to-use session on an address nobody proved they own, which is
+        // exactly what the verification gate exists to prevent. Instead the first
+        // sign-in has to redirect to the profile screen and confirm a real inbox.
+        $account = [
             'name' => 'Admin Keuangan',
             'email' => 'admin@example.test',
             'password' => Hash::make('password'),
             'role' => 'admin',
+        ];
+
+        $this->seedUser('admin', $account);
+
+        $this->seedUser('pimpinan', [
+            ...$account,
+            'name' => 'Pimpinan Sekolah',
+            'email' => 'pimpinan@example.test',
+            'role' => 'pimpinan',
         ]);
+    }
+
+    /**
+     * Create or refresh one seeded account and force it back to unverified.
+     *
+     * `updateOrCreate()` only writes fillable attributes, so an existing row
+     * would silently keep a stale `email_verified_at`. The explicit
+     * `forceFill()` is what makes re-seeding reliably reset the gate.
+     */
+    private function seedUser(string $username, array $attributes): void
+    {
+        $user = User::updateOrCreate(['username' => $username], $attributes);
+
+        $user->forceFill([
+            'email_verified_at' => null,
+            'email_verification_token' => null,
+            'email_verification_sent_at' => null,
+        ])->save();
     }
 }

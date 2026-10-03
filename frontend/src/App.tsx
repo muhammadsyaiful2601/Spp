@@ -3,23 +3,32 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   ClipboardList,
+  Clock,
   Download,
   HandCoins,
+  History,
   LayoutDashboard,
   Plus,
   ShieldCheck,
   SlidersHorizontal,
   UserCog,
   Users,
+  Wallet,
 } from "lucide-react";
 import {
+  activateAcademicYear,
   applyTheme,
   changePassword,
   clearSession,
+  createAcademicYear,
+  createTreasurer,
   deleteSchoolFavicon,
+  fetchAcademicYears,
   fetchAccount,
+  fetchActivityLogs,
   fetchPortalData,
   fetchPublicSchoolProfile,
+  fetchTreasurers,
   isHexColor,
   isNetworkFailure,
   login as loginApi,
@@ -28,12 +37,28 @@ import {
   publicStorageUrl,
   readToken,
   saveSchoolTheme,
+  setTreasurerActive,
   storeSession,
+  resetTreasurerPassword,
   updateAccount,
+  updateTreasurer,
   uploadSchoolFavicon,
   validateFaviconFile,
   validationMessage,
   type AuthUser,
+  type Treasurer,
+  createPosition,
+  deleteProfilePhoto,
+  fetchPositionRates,
+  fetchSppPeriods,
+  forgotPassword,
+  resetPassword,
+  savePositionRates,
+  saveSppRates,
+  sendVerificationCode,
+  uploadProfilePhoto,
+  validatePhotoFile,
+  verifyEmailCode,
 } from "./api";
 import "./login.css";
 import type { Notice, Page, Student, Transaction } from "./types";
@@ -45,7 +70,7 @@ import {
 } from "./constants";
 import { formatToday } from "./lib/format";
 import { studentSppAmount } from "./lib/students";
-import { readLocal, readProfile, readSessionUser } from "./lib/storage";
+import { readLocal, readProfile, readSessionUser, writeLocal } from "./lib/storage";
 import { applyFavicon, faviconErrorMessage } from "./lib/favicon";
 import { buildNotices } from "./lib/notices";
 import LoadingScreen from "./components/LoadingScreen";
@@ -55,7 +80,15 @@ import StudentsPage from "./components/StudentsPage";
 import PaymentPage from "./components/PaymentPage";
 import ReportsPage from "./components/ReportsPage";
 import SettingsPage from "./components/SettingsPage";
+import { useIdleLogout } from "./hooks/useIdleLogout";
+import { clearSessionActivity, IDLE_WARNING_MS, startSession } from "./lib/session";
+import ForgotPasswordPage from "./components/ForgotPasswordPage";
+import EmailVerificationCard from "./components/EmailVerificationCard";
+import type { CostRow, SppRow } from "./components/SettingsPage";
+import BendaharaPage from "./components/BendaharaPage";
+import ActivityLogPage from "./components/ActivityLogPage";
 import AccountPage from "./components/AccountPage";
+import type { TreasurerForm } from "./components/BendaharaPage";
 import ProfilePage from "./components/ProfilePage";
 import Sidebar from "./components/Sidebar";
 import Topbar from "./components/Topbar";
@@ -65,10 +98,16 @@ import StudentModal from "./components/StudentModal";
 import ReceiptModal from "./components/ReceiptModal";
 import Toast from "./components/Toast";
 
+
 function App() {
-  const [page, setPage] = useState<Page>("dashboard");
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(readSessionUser);
   const [authError, setAuthError] = useState("");
+  // Login and password recovery are two screens of the same signed-out flow.
+  const [authMode, setAuthMode] = useState<"login" | "forgot">("login");
+  const [recoverNotice, setRecoverNotice] = useState("");
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyNotice, setVerifyNotice] = useState("");
+  const [verifyError, setVerifyError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [students, setStudents] = useState(() =>
@@ -95,6 +134,14 @@ function App() {
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [reportClass, setReportClass] = useState("Semua kelas");
+  // Audit-trail filters. `logSearchTerm` deliberately lags `logSearch` so typing
+  // in the search box does not fire one request per keystroke.
+  const [logSearch, setLogSearch] = useState("");
+  const [logSearchTerm, setLogSearchTerm] = useState("");
+  const [logCategory, setLogCategory] = useState("");
+  const [logFrom, setLogFrom] = useState("");
+  const [logTo, setLogTo] = useState("");
+  const [logPage, setLogPage] = useState(1);
   const [activeTab, setActiveTab] = useState<"spp" | "biaya">("spp");
   const [payAmount, setPayAmount] = useState(0);
   const [receiptTransaction, setReceiptTransaction] =
@@ -103,10 +150,22 @@ function App() {
   const [themeBusy, setThemeBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [passwordNotice, setPasswordNotice] = useState("");
   const [now, setNow] = useState(() => new Date());
   const [academicYear, setAcademicYear] = useState("2026 / 2027");
+  // Fallback start year, refined from the API once the portal payload arrives.
+  const [academicStartYear, setAcademicStartYear] = useState(() => {
+    const year = new Date().getFullYear();
+    return new Date().getMonth() + 1 >= 7 ? year : year - 1;
+  });
+  // Selected year is remembered per browser; null means "let the server decide".
+  const [selectedYearId, setSelectedYearId] = useState<number | null>(() =>
+    readLocal<number | null>("cendekia-academic-year", null),
+  );
+  const [yearBusy, setYearBusy] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [readNotices, setReadNotices] = useState<string[]>(() =>
     readLocal("cendekia-read-notices", [] as string[]),
@@ -114,20 +173,250 @@ function App() {
   const noticeRef = useRef<HTMLDivElement | null>(null);
   const today = formatToday(now);
   const queryClient = useQueryClient();
-  const schoolProfileQuery = useQuery({
-    queryKey: ["public-school-profile"],
-    queryFn: fetchPublicSchoolProfile,
-  });
-  const portalQuery = useQuery({
-    queryKey: ["portal-data"],
-    queryFn: fetchPortalData,
-    enabled: Boolean(currentUser),
-  });
+  // Declared ahead of the data queries below: `emailVerified` gates which of
+  // them may run, and a query referencing it earlier would hit the temporal
+  // dead zone during the first render.
   const accountQuery = useQuery({
     queryKey: ["account"],
     queryFn: fetchAccount,
     enabled: Boolean(currentUser),
   });
+
+  /**
+   * An unverified account is confined to the profile screen by the API, so the
+   * UI mirrors that instead of offering buttons that would all fail with 403.
+   * Until `/auth/me` resolves the account is treated as verified so a normal
+   * session is never flashed to a blank page.
+   */
+  const emailVerified = accountQuery.data ? accountQuery.data.email_verified : true;
+
+  const schoolProfileQuery = useQuery({
+    queryKey: ["public-school-profile"],
+    queryFn: fetchPublicSchoolProfile,
+  });
+  const portalQuery = useQuery({
+    queryKey: ["portal-data", selectedYearId],
+    queryFn: () => fetchPortalData(selectedYearId),
+    // Gated on the verification state, not just on being signed in. An
+    // unverified account receives 403 for this endpoint, so firing it only
+    // produced a guaranteed error that lingered in the cache and made the next
+    // refetch look like a failure.
+    enabled: Boolean(currentUser) && emailVerified,
+  });
+  const academicYearsQuery = useQuery({
+    queryKey: ["academic-years"],
+    queryFn: fetchAcademicYears,
+    enabled: Boolean(currentUser),
+  });
+  const academicYears = academicYearsQuery.data ?? [];
+  // Treasurer management is leadership-only; an admin hitting this gets a 403,
+  // so the query stays disabled for them rather than firing a doomed request.
+  const treasurersQuery = useQuery({
+    queryKey: ["treasurers"],
+    queryFn: fetchTreasurers,
+    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
+  });
+  const [treasurerBusy, setTreasurerBusy] = useState(false);
+  const [treasurerError, setTreasurerError] = useState("");
+  // Only `pimpinan` may create or activate a year; hide the controls for `admin`
+  // instead of letting them hit a 403.
+  const canManageYears = currentUser?.role === "pimpinan";
+
+  // The audit trail is leadership-only and gated on verification, exactly like
+  // every other `pimpinan` route: an unverified account receives 403 for all of
+  // them, so firing the request early would only cache a guaranteed error.
+  const activityLogQuery = useQuery({
+    queryKey: [
+      "activity-logs",
+      logSearchTerm,
+      logCategory,
+      logFrom,
+      logTo,
+      logPage,
+    ],
+    queryFn: () =>
+      fetchActivityLogs({
+        search: logSearchTerm,
+        category: logCategory,
+        from: logFrom,
+        to: logTo,
+        page: logPage,
+        perPage: 15,
+      }),
+    enabled:
+      Boolean(currentUser) && emailVerified && currentUser?.role === "pimpinan",
+  });
+
+  // Debounce the server-side search: 300ms is long enough to swallow a burst of
+  // keystrokes and short enough to feel immediate. Any change returns to page 1,
+  // otherwise the reader can land on a page that no longer exists.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLogSearchTerm(logSearch.trim());
+      setLogPage(1);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [logSearch]);
+  // Editable tariff drafts. Only the values the user has actually changed live in
+  // state; everything else is derived from the server during render, which avoids
+  // the cascading re-render that syncing via useEffect would cause.
+  const [sppDrafts, setSppDrafts] = useState<Record<number, number>>({});
+  const [costDrafts, setCostDrafts] = useState<Record<number, number>>({});
+  const [costToggles, setCostToggles] = useState<Record<number, boolean>>({});
+  const [costClassId, setCostClassId] = useState<number | null>(null);
+  const [tariffBusy, setTariffBusy] = useState(false);
+  const [tariffError, setTariffError] = useState("");
+  const [lastTariffSavedAt, setLastTariffSavedAt] = useState<string | null>(null);
+
+  const classLevelRows = useMemo(
+    () =>
+      (portalQuery.data?.class_levels ?? [])
+        .slice()
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((level) => ({ id: level.id, name: level.name })),
+    [portalQuery.data],
+  );
+
+  // Tariff reads are leadership-only; an admin would only ever get a 403.
+  const sppPeriodsQuery = useQuery({
+    queryKey: ["spp-periods", selectedYearId],
+    queryFn: () => fetchSppPeriods(selectedYearId),
+    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
+  });
+  const positionRatesQuery = useQuery({
+    queryKey: ["position-rates", selectedYearId],
+    queryFn: fetchPositionRates,
+    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
+  });
+
+  /** Fall back to the first class level until the user picks another. */
+  const effectiveCostClassId = costClassId ?? classLevelRows[0]?.id ?? null;
+
+  /** One nominal per class, read from the first semester row for each level. */
+  const sppRows: SppRow[] = useMemo(() => {
+    const periods = sppPeriodsQuery.data ?? [];
+    return classLevelRows.map((level) => {
+      const match = periods.find((row) => row.class_level_id === level.id);
+      const serverValue = match ? Number(match.monthly_amount) : 0;
+      return {
+        classLevelId: level.id,
+        className: level.name,
+        amount: sppDrafts[level.id] ?? serverValue,
+      };
+    });
+  }, [classLevelRows, sppPeriodsQuery.data, sppDrafts]);
+
+  /** Non-SPP rows for the class level currently being edited. */
+  const costRows: CostRow[] = useMemo(() => {
+    const rates = positionRatesQuery.data ?? [];
+    return rates
+      .filter((row) => row.class_level_id === effectiveCostClassId)
+      .map((row) => ({
+        paymentPositionId: row.payment_position_id,
+        name: row.position,
+        type: row.type,
+        amount: costDrafts[row.payment_position_id] ?? Number(row.amount),
+        isActive:
+          costToggles[row.payment_position_id] ?? Boolean(row.is_active),
+      }));
+  }, [positionRatesQuery.data, effectiveCostClassId, costDrafts, costToggles]);
+
+  /** Wrap a tariff mutation so failures surface on the page, not silently. */
+  const runTariffAction = async (action: () => Promise<string>) => {
+    setTariffBusy(true);
+    setTariffError("");
+    try {
+      setToast(await action());
+      setLastTariffSavedAt(new Date().toISOString());
+      await Promise.all([sppPeriodsQuery.refetch(), positionRatesQuery.refetch()]);
+    } catch (error) {
+      setTariffError(
+        validationMessage(error, "rates.0.monthly_amount") ??
+          validationMessage(error, "positions.0.amount") ??
+          validationMessage(error, "name") ??
+          validationMessage(error, "amount") ??
+          (isNetworkFailure(error)
+            ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+            : "Perubahan tarif gagal disimpan."),
+      );
+    } finally {
+      setTariffBusy(false);
+    }
+  };
+
+  const saveSpp = () => {
+    if (selectedYearId === null) {
+      setTariffError("Pilih tahun ajaran terlebih dahulu.");
+      return;
+    }
+    void runTariffAction(async () => {
+      await saveSppRates(
+        selectedYearId,
+        sppRows.map((row) => ({
+          class_level_id: row.classLevelId,
+          monthly_amount: row.amount,
+        })),
+      );
+      return "Tarif SPP berhasil disimpan.";
+    });
+  };
+
+  const saveCosts = () => {
+    if (selectedYearId === null || effectiveCostClassId === null) {
+      setTariffError("Pilih tahun ajaran dan tingkat kelas terlebih dahulu.");
+      return;
+    }
+    void runTariffAction(async () => {
+      await savePositionRates({
+        academic_year_id: selectedYearId,
+        class_level_id: effectiveCostClassId,
+        positions: costRows.map((row) => ({
+          payment_position_id: row.paymentPositionId,
+          amount: row.amount,
+          is_active: row.isActive,
+        })),
+      });
+      return "Tarif biaya berhasil disimpan.";
+    });
+  };
+
+  const togglePosition = (row: CostRow, next: boolean) => {
+    if (selectedYearId === null || effectiveCostClassId === null) return;
+    // Flip locally first so the switch responds immediately, then persist.
+    setCostToggles((current) => ({ ...current, [row.paymentPositionId]: next }));
+    void runTariffAction(async () => {
+      await savePositionRates({
+        academic_year_id: selectedYearId,
+        class_level_id: effectiveCostClassId,
+        positions: [
+          { payment_position_id: row.paymentPositionId, amount: row.amount, is_active: next },
+        ],
+      });
+      return next ? `${row.name} diaktifkan.` : `${row.name} dinonaktifkan.`;
+    });
+  };
+
+  const addPosition = (input: { name: string; type: string; amount: number }) => {
+    if (selectedYearId === null) return;
+    void runTariffAction(async () => {
+      const created = await createPosition({ ...input, academic_year_id: selectedYearId });
+      return `Pos biaya ${created.name} berhasil ditambahkan.`;
+    });
+  };
+  const [page, setPage] = useState<Page>("dashboard");
+
+  /**
+   * The address typed into the verification card. Kept as a draft so a reload or
+   * a failed save never silently reverts what the user entered.
+   */
+  const [emailDraft, setEmailDraft] = useState<string | null>(null);
+  const storedEmail = accountQuery.data?.email ?? currentUser?.email ?? "";
+  const emailDirty = emailDraft !== null && emailDraft !== storedEmail;
+
+  // Derived, not synchronised: an unverified account always renders the profile
+  // screen. `effectivePage` is what the renderer uses, so no effect is needed.
+  const effectivePage: Page = emailVerified ? page : "profil";
   // Non-SPP positions are read from `position_rates`; the constant is only a
   // placeholder for the moment before the request resolves.
   // Class level names drive the SPP rate lookup, so they come from the database.
@@ -225,9 +514,118 @@ function App() {
       }
       if (portal.academic_year) {
         setAcademicYear(portal.academic_year.name);
+        setAcademicStartYear(portal.academic_year.start_year);
       }
     });
   }, [portalQuery.data]);
+
+  /** Persist the chosen year and let the portal query refetch under that scope. */
+  const selectYear = (yearId: number) => {
+    setSelectedYearId(yearId);
+    writeLocal("cendekia-academic-year", yearId);
+  };
+
+  /** Create a year (with its tariffs cloned) and switch straight into it. */
+  const createYear = async (input: {
+    startYear: number;
+    endYear: number;
+    copyFrom: number | null;
+  }) => {
+    setYearBusy(true);
+    try {
+      const created = await createAcademicYear({
+        start_year: input.startYear,
+        end_year: input.endYear,
+        copy_from: input.copyFrom,
+      });
+      await academicYearsQuery.refetch();
+      selectYear(created.id);
+      setToast(`Tahun ajaran ${created.name} dibuat.`);
+    } catch (error) {
+      // Surface the server's own wording (duplicate name, bad range) when present.
+      setToast(
+        validationMessage(error, "name") ??
+          validationMessage(error, "end_year") ??
+          "Tahun ajaran gagal dibuat. Silakan coba kembali.",
+      );
+    } finally {
+      setYearBusy(false);
+    }
+  };
+
+  /** Make a year the server-side default so other clients resolve to it too. */
+  const activateYear = async (yearId: number) => {
+    setYearBusy(true);
+    try {
+      await activateAcademicYear(yearId);
+      await academicYearsQuery.refetch();
+      selectYear(yearId);
+      setToast("Tahun ajaran aktif berhasil diperbarui.");
+    } catch (error) {
+      setToast(
+        isNetworkFailure(error)
+          ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+          : "Tahun ajaran gagal diaktifkan.",
+      );
+    } finally {
+      setYearBusy(false);
+    }
+  };
+
+  /**
+   * Run a treasurer mutation, refresh the list and surface any API error on the
+   * page itself so the treasurer never sees a silent failure.
+   */
+  const runTreasurerAction = async (action: () => Promise<string>) => {
+    setTreasurerBusy(true);
+    setTreasurerError("");
+    try {
+      setToast(await action());
+      await treasurersQuery.refetch();
+    } catch (error) {
+      setTreasurerError(
+        validationMessage(error, "username") ??
+          validationMessage(error, "email") ??
+          validationMessage(error, "password") ??
+          validationMessage(error, "is_active") ??
+          validationMessage(error, "name") ??
+          (isNetworkFailure(error)
+            ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+            : "Perubahan bendahara gagal disimpan."),
+      );
+    } finally {
+      setTreasurerBusy(false);
+    }
+  };
+
+  const addTreasurer = (input: TreasurerForm) =>
+    void runTreasurerAction(async () => {
+      const created = await createTreasurer(input);
+      return `Akun bendahara ${created.name} berhasil dibuat.`;
+    });
+
+  const editTreasurer = (
+    treasurer: Treasurer,
+    input: { name: string; username: string; email: string },
+  ) =>
+    void runTreasurerAction(async () => {
+      await updateTreasurer(treasurer.id, input);
+      return `Data ${treasurer.name} berhasil diperbarui.`;
+    });
+
+  const changeTreasurerPassword = (treasurer: Treasurer, password: string) =>
+    void runTreasurerAction(async () => {
+      await resetTreasurerPassword(treasurer.id, password, password);
+      return `Kata sandi ${treasurer.name} berhasil diperbarui.`;
+    });
+
+  const toggleTreasurer = (treasurer: Treasurer, next: boolean) =>
+    void runTreasurerAction(async () => {
+      await setTreasurerActive(treasurer.id, next);
+      return next
+        ? `Akun ${treasurer.name} diaktifkan kembali.`
+        : `Akun ${treasurer.name} dinonaktifkan.`;
+    });
   // The stored cost name may no longer exist once positions load, so resolve it
   // to a valid entry during render rather than syncing it in an effect.
   const activeCost =
@@ -315,6 +713,16 @@ function App() {
     setToast("Semua notifikasi ditandai sudah dibaca.");
   }
 
+  /** Clear every audit-trail filter back to the default view. */
+  function resetLogFilters() {
+    setLogSearch("");
+    setLogSearchTerm("");
+    setLogCategory("");
+    setLogFrom("");
+    setLogTo("");
+    setLogPage(1);
+  }
+
   const pageTitles: Record<Page, string> = {
     dashboard: "Ringkasan",
     siswa: "Data siswa",
@@ -322,42 +730,51 @@ function App() {
     laporan: "Laporan",
     pengaturan: "Pengaturan tarif",
     profil: "Profil sekolah",
+    bendahara: "Kelola bendahara",
+    log: "Log aktivitas",
     akun: "Akun saya",
   };
-  const navGroups = [
-    {
-      label: "MENU UTAMA",
-      links: [
-        { id: "dashboard" as Page, text: "Ringkasan", icon: LayoutDashboard },
-        ...(currentUser?.role === "admin"
+  const navGroups = emailVerified
+    ? [
+        {
+          label: "MENU UTAMA",
+          links: [
+            { id: "dashboard" as Page, text: "Ringkasan", icon: LayoutDashboard },
+            ...(currentUser?.role === "admin"
+              ? [
+                  { id: "siswa" as Page, text: "Data siswa", icon: Users },
+                  { id: "pembayaran" as Page, text: "Pembayaran", icon: HandCoins },
+                ]
+              : []),
+            { id: "laporan" as Page, text: "Laporan", icon: ClipboardList },
+          ],
+        },
+        ...(currentUser?.role === "pimpinan"
           ? [
-              { id: "siswa" as Page, text: "Data siswa", icon: Users },
-              { id: "pembayaran" as Page, text: "Pembayaran", icon: HandCoins },
+              {
+                label: "PREFERENSI",
+                links: [
+                  {
+                    id: "pengaturan" as Page,
+                    text: "Pengaturan tarif",
+                    icon: SlidersHorizontal,
+                  },
+                  { id: "profil" as Page, text: "Profil sekolah", icon: Building2 },
+                  { id: "bendahara" as Page, text: "Kelola bendahara", icon: Wallet },
+                  { id: "log" as Page, text: "Log aktivitas", icon: History },
+                ],
+              },
             ]
           : []),
-        { id: "laporan" as Page, text: "Laporan", icon: ClipboardList },
-      ],
-    },
-    ...(currentUser?.role === "pimpinan"
-      ? [
-          {
-            label: "PREFERENSI",
-            links: [
-              {
-                id: "pengaturan" as Page,
-                text: "Pengaturan tarif",
-                icon: SlidersHorizontal,
-              },
-              { id: "profil" as Page, text: "Profil sekolah", icon: Building2 },
-            ],
-          },
-        ]
-      : []),
-    {
-      label: "AKUN",
-      links: [{ id: "akun" as Page, text: "Akun saya", icon: UserCog }],
-    },
-  ];
+        { label: "AKUN", links: [{ id: "akun" as Page, text: "Akun saya", icon: UserCog }] },
+      ]
+    // Unverified accounts see only the screen where they can verify.
+    : [
+        {
+          label: "VERIFIKASI",
+          links: [{ id: "profil" as Page, text: "Verifikasi email", icon: UserCog }],
+        },
+      ];
   const filteredStudents = students.filter((student) =>
     `${student.name} ${student.id} ${student.nisn} ${student.className}`
       .toLowerCase()
@@ -618,28 +1035,183 @@ function App() {
     }
   }
   async function handleLogout() {
+    // Revoke the token server-side when possible, but never block the exit on it:
+    // an offline or expired backend must still clear the local session.
     try {
       await logoutApi();
     } catch {
-      clearSession();
+      /* ignore */
     }
+    clearSessionActivity();
+    clearSession();
     setCurrentUser(null);
     setPage("dashboard");
+    setActiveTab("spp");
   }
 
-  async function handleAccountSave(name: string, email: string) {
+  /** Drop the session without a round trip, used when it expires. */
+  function handleSessionExpired() {
+    clearSessionActivity();
+    clearSession();
+    setCurrentUser(null);
+    setPage("dashboard");
+    setToast("Sesi berakhir karena tidak ada aktivitas. Silakan masuk kembali.");
+  }
+
+  // End the session after a period of inactivity, and follow another tab out
+  // when it signs out. A 15 minute limit is short enough that a silent sign-out
+  // would feel arbitrary, so the banner warns first.
+  const { remainingMs, keepAlive } = useIdleLogout(
+    Boolean(currentUser),
+    handleSessionExpired,
+  );
+  const idleWarningMs =
+    remainingMs !== null && remainingMs < IDLE_WARNING_MS ? remainingMs : null;
+
+  /** Replace the signed-in user's avatar, then refresh every screen showing it. */
+async function handlePhotoUpload(file: File) {
+    if (photoBusy) return;
+    const invalid = validatePhotoFile(file);
+    if (invalid) {
+      setPhotoError(invalid);
+      return;
+    }
+    setPhotoBusy(true);
+    setPhotoError("");
+    try {
+      const updated = await uploadProfilePhoto(file);
+      storeSession(readToken() ?? "", updated);
+      setCurrentUser(updated);
+      setToast("Foto profil berhasil diperbarui.");
+      await queryClient.invalidateQueries({ queryKey: ["account"] });
+    } catch (error) {
+      setPhotoError(
+        validationMessage(error, "photo") ??
+          (isNetworkFailure(error)
+            ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+            : "Foto profil gagal diunggah."),
+      );
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  /** Remove the avatar; every surface falls back to initials again. */
+  async function handlePhotoRemove() {
+    if (photoBusy) return;
+    setPhotoBusy(true);
+    setPhotoError("");
+    try {
+      const updated = await deleteProfilePhoto();
+      storeSession(readToken() ?? "", updated);
+      setCurrentUser(updated);
+      setToast("Foto profil dihapus.");
+      await queryClient.invalidateQueries({ queryKey: ["account"] });
+    } catch (error) {
+      setPhotoError(
+        isNetworkFailure(error)
+          ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+          : "Foto profil gagal dihapus.",
+      );
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  /** Persist a new address from the verification card. */
+  async function handleSaveVerificationEmail() {
+    if (verifyBusy || !emailDirty || emailDraft === null || !currentUser) return;
+    setVerifyBusy(true);
+    setVerifyError("");
+    setVerifyNotice("");
+    try {
+      const updated = await updateAccount({
+        name: currentUser.name,
+        username: currentUser.username,
+        email: emailDraft.trim(),
+      });
+      storeSession(readToken() ?? "", updated);
+      setCurrentUser(updated);
+      setEmailDraft(null);
+      await queryClient.invalidateQueries({ queryKey: ["account"] });
+      setToast("Alamat email diperbarui. Kirim kode untuk verifikasi.");
+    } catch (error) {
+      setVerifyError(
+        validationMessage(error, "email") ??
+          validationMessage(error, "username") ??
+          (isNetworkFailure(error)
+            ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+            : "Alamat email gagal diperbarui."),
+      );
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
+  /** Request a fresh verification code for the signed-in account. */
+  async function handleSendVerification() {
+    if (verifyBusy) return;
+    setVerifyBusy(true);
+    setVerifyError("");
+    setVerifyNotice("");
+    try {
+      await sendVerificationCode();
+      setVerifyNotice("Kode verifikasi telah dikirim ke email akun Anda.");
+    } catch (error) {
+      setVerifyError(
+        validationMessage(error, "code") ??
+          (isNetworkFailure(error)
+            ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+            : "Kode verifikasi gagal dikirim. Coba lagi."),
+      );
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
+  /** Submit the emailed code and lift the gate once the server confirms it. */
+  async function handleVerifyEmail(code: string) {
+    if (verifyBusy) return;
+    setVerifyBusy(true);
+    setVerifyError("");
+    setVerifyNotice("");
+    try {
+      await verifyEmailCode(code);
+      // Verification is already committed server-side. The refetches below are
+      // only cosmetic refreshes, and `invalidateQueries` rejects when any of
+      // them fail — with `retry: false` a single blip was enough to report a
+      // correct code as "ditolak", while the account was in fact verified.
+      // Refreshing the account data must never decide the outcome of a submit
+      // that the server already accepted.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["account"] }, { throwOnError: false }),
+        queryClient.invalidateQueries({ queryKey: ["portal-data"] }, { throwOnError: false }),
+      ]);
+      setToast("Email terverifikasi. Seluruh fitur portal kini aktif.");
+      setPage("dashboard");
+    } catch (error) {
+      setVerifyError(
+        validationMessage(error, "code") ?? "Kode verifikasi ditolak. Coba lagi.",
+      );
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
+  async function handleAccountSave(name: string, username: string, email: string) {
     if (accountBusy) return;
     setAccountBusy(true);
     setAccountError("");
     try {
-      const updated = await updateAccount({ name, email });
+      const updated = await updateAccount({ name, username, email });
       storeSession(readToken() ?? "", updated);
       setCurrentUser(updated);
       setToast("Data akun berhasil diperbarui.");
       await queryClient.invalidateQueries({ queryKey: ["account"] });
     } catch (error) {
       setAccountError(
-        validationMessage(error, "email") ??
+        validationMessage(error, "username") ??
+          validationMessage(error, "email") ??
           validationMessage(error, "name") ??
           (isNetworkFailure(error)
             ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
@@ -677,40 +1249,98 @@ function App() {
     }
   }
 
-  if (
-    schoolProfileQuery.isLoading ||
-    portalQuery.isLoading ||
-    authLoading ||
-    pdfLoading
-  ) {
+  /*
+   * The full-screen splash is reserved for signing in.
+   *
+   * It used to also cover `schoolProfileQuery` and `portalQuery`, but those are
+   * pending on every cold start — reopening a tab, reloading, restarting the app —
+   * so a routine refresh replaced the whole interface with a splash screen. The
+   * data they fetch is already mirrored into localStorage and used as the
+   * initial state above, so there is always something real to render: the last
+   * known numbers appear immediately and are corrected once the response lands.
+   *
+   * Signing in is different. There is nothing to show beforehand, and dropping
+   * the pending state there would leave the button looking dead while the
+   * server is being contacted.
+   */
+  if (authLoading) {
     return (
       <LoadingScreen
         school={profile.school}
         logo={profile.logo}
-        message={
-          pdfLoading
-            ? "Menyusun laporan PDF"
-            : authLoading
-              ? "Memverifikasi akun"
-              : portalQuery.isLoading
-                ? "Mengambil data dari database"
-                : "Menyiapkan portal sekolah"
-        }
+        message="Memverifikasi akun"
       />
     );
   }
 
   if (!currentUser) {
+    if (authMode === "forgot") {
+      return (
+        <ForgotPasswordPage
+          school={profile.school}
+          logo={profile.logo}
+          error={authError}
+          notice={recoverNotice}
+          onBackToLogin={() => {
+            setAuthMode("login");
+            setAuthError("");
+            setRecoverNotice("");
+          }}
+          onRequestCode={async (identifier) => {
+            setAuthError("");
+            try {
+              await forgotPassword(identifier);
+              setRecoverNotice(
+                "Jika data tersebut terdaftar, kode atur ulang sudah dikirim ke email akun.",
+              );
+            } catch (error) {
+              setAuthError(
+                validationMessage(error, "identifier") ??
+                  "Permintaan gagal. Silakan coba beberapa saat lagi.",
+              );
+            }
+          }}
+          onReset={async (token, password) => {
+            setAuthError("");
+            try {
+              await resetPassword({
+                token,
+                password,
+                password_confirmation: password,
+              });
+              setRecoverNotice("Kata sandi berhasil diubah. Silakan masuk kembali.");
+              setAuthMode("login");
+            } catch (error) {
+              setAuthError(
+                validationMessage(error, "token") ??
+                  validationMessage(error, "password") ??
+                  "Kode tidak berlaku. Minta kode baru lalu coba lagi.",
+              );
+              throw error;
+            }
+          }}
+        />
+      );
+    }
+
     return (
       <LoginPage
         school={profile.school}
         logo={profile.logo}
         error={authError}
+        onForgotPassword={() => {
+          setAuthError("");
+          setRecoverNotice("");
+          setAuthMode("forgot");
+        }}
         onSubmit={async (username, password) => {
           setAuthError("");
           setAuthLoading(true);
           try {
             const session = await loginApi(username, password);
+            // Opening the idle window here means the countdown starts at login,
+            // not at whatever timestamp a previous visit left behind.
+            startSession();
             setCurrentUser(session.user);
             setPage("dashboard");
           } catch (error) {
@@ -749,7 +1379,13 @@ function App() {
         setPage={setPage}
         setMobileNav={setMobileNav}
         currentUser={currentUser}
-        academicYear={academicYear}
+        academicYears={academicYears}
+        canManageYears={canManageYears}
+        onSelectYear={selectYear}
+        onCreateYear={createYear}
+        onActivate={activateYear}
+        selectedYearId={selectedYearId}
+        portalQuerying={yearBusy || portalQuery.isFetching}
         today={today}
         notices={notices}
         unreadCount={unreadCount}
@@ -767,12 +1403,12 @@ function App() {
                 {today.upper} <span className="live-dot" /> DATA TERBARU
               </div>
               <h1>
-                {page === "dashboard"
+                {effectivePage === "dashboard"
                   ? `Assalamu'alaikum, ${currentUser.name.split(" ")[0]}`
                   : pageTitles[page]}
               </h1>
               <p>
-                {page === "dashboard"
+                {effectivePage === "dashboard"
                   ? "Berikut ringkasan keuangan sekolah hari ini."
                   : page === "pembayaran"
                     ? "Kelola pembayaran SPP dan biaya pendidikan siswa."
@@ -782,10 +1418,14 @@ function App() {
                         ? "Atur tarif SPP dan pos biaya sesuai kebijakan sekolah."
                         : page === "profil"
                           ? "Identitas sekolah yang tampil di kuitansi dan laporan."
-                          : "Pantau realisasi penerimaan dan tunggakan sekolah."}
+                          : page === "bendahara"
+                            ? "Kelola akun bendahara yang mencatat pembayaran."
+                            : page === "log"
+                              ? "Jejak aktivitas pimpinan dan bendahara di portal."
+                              : "Pantau realisasi penerimaan dan tunggakan sekolah."}
               </p>
             </div>
-            {page === "dashboard" && (
+            {effectivePage === "dashboard" && (
               <button
                 className="button button-outline"
                 onClick={() => void exportReport("pdf", transactions)}
@@ -793,7 +1433,7 @@ function App() {
                 <Download size={16} /> Unduh PDF
               </button>
             )}
-            {page === "siswa" && (
+            {effectivePage === "siswa" && (
               <button
                 className="button button-primary"
                 onClick={() => setModal("student")}
@@ -803,13 +1443,24 @@ function App() {
             )}
           </div>
 
-          {page === "dashboard" && (
+          {effectivePage === "dashboard" && (
             <Dashboard
               students={students}
               transactions={transactions}
               totalPaid={totalPaid}
               outstanding={outstanding}
               monthlyRevenue={monthlyRevenue}
+              now={now}
+              academicYearLabel={academicYear}
+              academicStartYear={academicStartYear}
+              classLevels={classLevels}
+              academicYears={academicYears}
+              canManageYears={canManageYears}
+              onActivateYear={activateYear}
+              onSelectYear={selectYear}
+              onCreateYear={createYear}
+              selectedYearId={selectedYearId}
+              portalQuerying={yearBusy || portalQuery.isFetching}
               onGo={setPage}
               onReceipt={(item) => {
                 setReceiptTransaction(item);
@@ -817,7 +1468,7 @@ function App() {
               }}
             />
           )}
-          {page === "siswa" && (
+          {effectivePage === "siswa" && (
             <StudentsPage
               students={filteredStudents}
               sppAmounts={sppAmounts}
@@ -828,7 +1479,7 @@ function App() {
               onAdd={() => setModal("student")}
             />
           )}
-          {page === "pembayaran" && (
+          {effectivePage === "pembayaran" && (
             <PaymentPage
               students={filteredStudents}
               sppAmounts={sppAmounts}
@@ -838,7 +1489,7 @@ function App() {
               onPay={openPayment}
             />
           )}
-          {page === "laporan" && (
+          {effectivePage === "laporan" && (
             <ReportsPage
               transactions={transactions}
               students={students}
@@ -846,19 +1497,95 @@ function App() {
               reportClass={reportClass}
               setReportClass={setReportClass}
               onExport={exportReport}
+              busy={pdfLoading}
             />
           )}
-          {page === "pengaturan" && (
+          {effectivePage === "pengaturan" && (
             <SettingsPage
+              academicYearLabel={academicYear}
               activeTab={activeTab}
               setActiveTab={setActiveTab}
-              sppAmounts={sppAmounts}
-              setSppAmounts={setSppAmounts}
-              costs={positionRates}
+              busy={tariffBusy}
+              error={tariffError}
+              lastSavedAt={lastTariffSavedAt}
+              sppRows={sppRows}
+              onSppAmountChange={(classLevelId, amount) =>
+                setSppDrafts((current) => ({ ...current, [classLevelId]: amount }))
+              }
+              onSaveSpp={saveSpp}
+              costRows={costRows}
+              costClassId={effectiveCostClassId}
+              costClassLevels={classLevelRows}
+              onSetCostClass={setCostClassId}
+              onCostAmountChange={(paymentPositionId, amount) =>
+                setCostDrafts((current) => ({ ...current, [paymentPositionId]: amount }))
+              }
+              onTogglePosition={togglePosition}
+              onSaveCosts={saveCosts}
+              onAddPosition={addPosition}
             />
           )}
-          {page === "profil" && (
+          {effectivePage === "bendahara" && (
+            <BendaharaPage
+              treasurers={treasurersQuery.data ?? []}
+              loading={treasurersQuery.isLoading}
+              busy={treasurerBusy}
+              error={treasurerError}
+              onCreate={addTreasurer}
+              onUpdate={editTreasurer}
+              onResetPassword={changeTreasurerPassword}
+              onToggleActive={toggleTreasurer}
+            />
+          )}
+          {effectivePage === "log" && (
+            <ActivityLogPage
+              category={logCategory}
+              error={
+                activityLogQuery.isError
+                  ? isNetworkFailure(activityLogQuery.error)
+                    ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+                    : "Log aktivitas gagal dimuat."
+                  : ""
+              }
+              from={logFrom}
+              loading={activityLogQuery.isFetching}
+              onCategoryChange={(value) => {
+                setLogCategory(value);
+                setLogPage(1);
+              }}
+              onFromChange={(value) => {
+                setLogFrom(value);
+                setLogPage(1);
+              }}
+              onPageChange={setLogPage}
+              onReset={resetLogFilters}
+              onSearchChange={setLogSearch}
+              onToChange={(value) => {
+                setLogTo(value);
+                setLogPage(1);
+              }}
+              page={logPage}
+              result={activityLogQuery.data}
+              search={logSearch}
+              to={logTo}
+            />
+          )}
+          {effectivePage === "profil" && (
             <ProfilePage
+              verification={
+                <EmailVerificationCard
+                  verified={emailVerified}
+                  email={emailDraft ?? storedEmail}
+                  emailDirty={emailDirty}
+                  busy={verifyBusy}
+                  notice={verifyNotice}
+                  error={verifyError}
+                  onChangeEmail={setEmailDraft}
+                  onSaveEmail={handleSaveVerificationEmail}
+                  onSendCode={handleSendVerification}
+                  onVerify={handleVerifyEmail}
+                />
+              }
               profile={profile}
               setProfile={setProfile}
               uploadLogo={uploadLogo}
@@ -870,7 +1597,7 @@ function App() {
               onSave={() => setToast("Profil sekolah berhasil disimpan.")}
             />
           )}
-          {page === "akun" && (
+          {effectivePage === "akun" && (
             <AccountPage
               account={accountQuery.data}
               fallback={currentUser}
@@ -882,6 +1609,10 @@ function App() {
               onSave={handleAccountSave}
               onChangePassword={handlePasswordSave}
               onLogout={handleLogout}
+              onUploadPhoto={handlePhotoUpload}
+              onRemovePhoto={handlePhotoRemove}
+              photoBusy={photoBusy}
+              photoError={photoError}
             />
           )}
         </section>
@@ -930,7 +1661,20 @@ function App() {
           receiptTransaction={receiptTransaction}
         />
       )}
-      {toast && <Toast toast={toast} />}
+      {idleWarningMs !== null && (
+            <div className="session-warning" role="alert">
+              <Clock size={15} />
+              <span>
+                Sesi berakhir dalam{" "}
+                <strong>{Math.max(1, Math.ceil(idleWarningMs / 60_000))} menit</strong>{" "}
+                karena tidak ada aktivitas.
+              </span>
+              <button type="button" onClick={keepAlive}>
+                Tetap masuk
+              </button>
+            </div>
+          )}
+          {toast && <Toast toast={toast} />}
     </div>
   );
 }

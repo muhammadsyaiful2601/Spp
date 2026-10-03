@@ -1,8 +1,10 @@
-import { ArrowRight, ArrowUpRight, Banknote, BookOpenCheck, ChevronDown, CircleDollarSign, ReceiptText, Users, Wallet } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Banknote, BookOpenCheck, CircleDollarSign, ReceiptText, Users, Wallet } from "lucide-react";
 import type { Page, Student, Transaction } from "../types";
+import type { AcademicYear } from "../api";
 import { money } from "../lib/format";
-import { months } from "../constants";
-
+import { daysInMonth, revenueTrend } from "../lib/metrics";
+import { monthNames, months } from "../constants";
+import AcademicYearSwitcher from "./AcademicYearSwitcher";
 
 
 export function Dashboard({
@@ -11,6 +13,17 @@ export function Dashboard({
   totalPaid,
   outstanding,
   monthlyRevenue,
+  now,
+  academicYearLabel,
+  academicStartYear,
+  classLevels,
+  academicYears,
+  canManageYears,
+  onActivateYear,
+  onCreateYear,
+  onSelectYear,
+  selectedYearId,
+  portalQuerying,
   onGo,
   onReceipt,
 }: {
@@ -19,6 +32,21 @@ export function Dashboard({
   totalPaid: number;
   outstanding: number;
   monthlyRevenue: number[];
+  now: Date;
+  academicYearLabel: string;
+  academicStartYear: number;
+  classLevels: string[];
+  academicYears: AcademicYear[];
+  canManageYears: boolean;
+  onActivateYear: (yearId: number) => Promise<void>;
+  onCreateYear: (input: {
+    startYear: number;
+    endYear: number;
+    copyFrom: number | null;
+  }) => Promise<void>;
+  onSelectYear: (yearId: number) => void;
+  selectedYearId: number | null;
+  portalQuerying: boolean;
   onGo: (page: Page) => void;
   onReceipt: (item: Transaction) => void;
 }) {
@@ -34,6 +62,15 @@ export function Dashboard({
           100,
       )
     : 0;
+  // Live month-over-month movement, derived from the real revenue buckets.
+  const trend = revenueTrend(monthlyRevenue, now, academicStartYear);
+  const TrendIcon =
+    trend.direction === "down" ? ArrowDownRight : ArrowUpRight;
+  // The bar for the month currently being collected.
+  const currentMonthIndex = trend.currentIndex;
+  const currentMonthName = monthNames[currentMonthIndex] ?? "";
+  const closingDay = daysInMonth(now);
+  const endYear = academicStartYear + 1;
   return (
     <>
       <div className="metrics-grid">
@@ -46,10 +83,18 @@ export function Dashboard({
           </div>
           <strong>{money(totalPaid)}</strong>
           <div className="metric-foot">
-            <span className="trend positive">
-              <ArrowUpRight size={14} /> 12,8%
-            </span>
-            <span>dibanding bulan lalu</span>
+            {trend.percent === null ? (
+              <span className="trend neutral">
+                <TrendIcon size={14} /> {trend.label}
+              </span>
+            ) : (
+              <span
+                className={`trend ${trend.direction === "down" ? "negative" : "positive"}`}
+              >
+                <TrendIcon size={14} /> {trend.label}
+              </span>
+            )}
+            <span>dibanding {trend.period}</span>
           </div>
           <div className="metric-spark spark-green">
             <i />
@@ -138,26 +183,52 @@ export function Dashboard({
           <div className="panel-heading">
             <div>
               <h2>Arus penerimaan</h2>
-              <p>Tren pemasukan tahun ajaran 2026/2027</p>
+              <p>Tren pemasukan tahun ajaran {academicYearLabel}</p>
             </div>
-            <button className="select-button">
-              Tahun ajaran <ChevronDown size={14} />
-            </button>
+            <AcademicYearSwitcher
+              academicYears={academicYears}
+              canManage={canManageYears}
+              onCreate={onCreateYear}
+              onActivate={onActivateYear}
+              onSelect={onSelectYear}
+              selectedId={selectedYearId}
+              variant="panel"
+              busy={portalQuerying}
+            />
           </div>
           <div className="chart-summary">
             <strong>{money(monthlyRevenue.reduce((sum, value) => sum + value, 0))}</strong>
             <span>
               <i /> Penerimaan bulanan
             </span>
-            <div className="chart-change">
-              <ArrowUpRight size={15} /> 8,4%
+            <div
+              className={`chart-change ${
+                trend.percent === null
+                  ? "is-neutral"
+                  : trend.direction === "down"
+                    ? "is-down"
+                    : ""
+              }`}
+            >
+              {trend.percent === null ? (
+                "Belum ada pembanding"
+              ) : (
+                <>
+                  {trend.direction === "down" ? (
+                    <ArrowDownRight size={15} />
+                  ) : (
+                    <ArrowUpRight size={15} />
+                  )}{" "}
+                  {trend.label}
+                </>
+              )}
             </div>
           </div>
           <div className="bar-chart" aria-label="Grafik penerimaan per bulan">
             {revenue.map((height, index) => (
               <div className="chart-column" key={months[index]}>
                 <div
-                  className={`bar ${index === 11 ? "current" : ""}`}
+                  className={`bar ${index === currentMonthIndex ? "current" : ""}`}
                   style={{ height: `${height}%` }}
                 >
                   <span>{money(monthlyRevenue[index] ?? 0)}</span>
@@ -167,8 +238,8 @@ export function Dashboard({
             ))}
           </div>
           <div className="chart-baseline">
-            <span>Jul 2026</span>
-            <span>Jun 2027</span>
+            <span>Jul {academicStartYear}</span>
+            <span>Jun {endYear}</span>
           </div>
         </section>
         <section className="panel status-panel">
@@ -299,38 +370,38 @@ export function Dashboard({
             </button>
           </div>
           <div className="class-list">
-            {[
-              "Kelas I",
-              "Kelas II",
-              "Kelas III",
-              "Kelas IV",
-              "Kelas V",
-              "Kelas VI",
-            ].map((className) => {
-              const group = students.filter(
-                (student) => student.className === className,
-              );
-              const paid = group.length
-                ? Math.round(
-                    (group.reduce(
-                      (sum, student) => sum + student.paid.length,
-                      0,
-                    ) /
-                      (group.length * 12)) *
-                      100,
-                  )
-                : 0;
-              return (
-                <div className="class-row" key={className}>
-                  <span>{className}</span>
-                  <div className="progress-track">
-                    <i style={{ width: `${paid}%` }} />
+            {classLevels.length === 0 ? (
+              <p className="metric-caption">
+                Belum ada tingkat kelas. Tambahkan data kelas pada pengaturan
+                sekolah.
+              </p>
+            ) : (
+              classLevels.map((className) => {
+                const group = students.filter(
+                  (student) => student.className === className,
+                );
+                const paid = group.length
+                  ? Math.round(
+                      (group.reduce(
+                        (sum, student) => sum + student.paid.length,
+                        0,
+                      ) /
+                        (group.length * 12)) *
+                        100,
+                    )
+                  : 0;
+                return (
+                  <div className="class-row" key={className}>
+                    <span>{className}</span>
+                    <div className="progress-track">
+                      <i style={{ width: `${paid}%` }} />
+                    </div>
+                    <strong>{paid}%</strong>
+                    <small>{group.length} siswa</small>
                   </div>
-                  <strong>{paid}%</strong>
-                  <small>{group.length} siswa</small>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </section>
         <section className="notice-card">
@@ -340,13 +411,13 @@ export function Dashboard({
           <span className="notice-label">PENGINGAT</span>
           <h3>Tutup buku bulan ini</h3>
           <p>
-            Pastikan seluruh transaksi bulan Oktober sudah direkap sebelum
-            tanggal 31.
+            Pastikan seluruh transaksi {currentMonthName} sudah direkap sebelum
+            tanggal {closingDay}.
           </p>
           <button onClick={() => onGo("laporan")}>
-            Buka laporan Oktober <ArrowRight size={15} />
+            Buka laporan {currentMonthName} <ArrowRight size={15} />
           </button>
-          <div className="notice-decoration">10</div>
+          <div className="notice-decoration">{now.getDate()}</div>
         </section>
       </div>
     </>
