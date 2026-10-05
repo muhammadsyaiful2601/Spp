@@ -113,6 +113,22 @@ return [
         'expose_codes_in_response' => (bool) env('EMAIL_VERIFICATION_EXPOSE_CODE', false),
     ],
 
+    /*
+    |----------------------------------------------------------------------
+    | Login Security Alert
+    |----------------------------------------------------------------------
+    |
+    | A "was this you?" email is sent after every successful sign-in of a
+    | verified address. This value is how long the signed "end all sessions"
+    | link inside that email stays usable — long enough for the reader to
+    | notice a suspicious login late, short enough that a leaked link is not
+    | a permanent sign-out weapon.
+    */
+
+    'login_alert' => [
+        'link_ttl_hours' => (int) env('LOGIN_ALERT_LINK_TTL_HOURS', 24),
+    ],
+
     'passwords' => [
         'users' => [
             'provider' => 'users',

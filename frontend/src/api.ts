@@ -243,14 +243,35 @@ export function validationMessage(error: unknown, field: string): string | null 
   return Array.isArray(list) && list.length > 0 ? String(list[0]) : null
 }
 
+/**
+ * First validation message from any branding field on the school profile
+ * (identity, logo, theme), with role/session/network fallbacks. The identity
+ * form posts several fields at once, so the failing field name is not known
+ * up front the way `validationMessage` requires.
+ */
+export function brandingErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const errors = (error.response?.data as { errors?: Record<string, string[]> } | undefined)?.errors
+    for (const messages of Object.values(errors ?? {})) {
+      if (Array.isArray(messages) && messages.length > 0) return String(messages[0])
+    }
+    if (error.response?.status === 403) return "Hanya pimpinan yang dapat mengubah profil sekolah."
+    if (error.response?.status === 401) return "Sesi Anda berakhir. Silakan masuk kembali."
+    if (!error.response) return "Server tidak dapat dihubungi. Coba lagi beberapa saat."
+  }
+  return fallback
+}
+
 export type PublicSchoolProfile = {
   school_name: string
+  foundation_name: string | null
   logo_path: string | null
   favicon_path: string | null
   address: string
   phone: string | null
   email: string | null
   website: string | null
+  receipt_note: string | null
   theme_primary: string
   theme_accent: string
 }
@@ -265,6 +286,48 @@ export type SchoolProfile = PublicSchoolProfile & {
 
 export async function fetchPublicSchoolProfile(): Promise<PublicSchoolProfile> {
   const { data } = await api.get<{ data: PublicSchoolProfile }>('/public/sekolah-profile')
+  return data.data
+}
+
+/** Full row for the identity editor — includes fields the public endpoint omits. */
+export async function fetchSchoolProfile(): Promise<SchoolProfile> {
+  const { data } = await api.get<{ data: SchoolProfile }>('/pimpinan/sekolah-profile')
+  return data.data
+}
+
+export type SchoolProfileIdentity = {
+  school_name: string
+  foundation_name: string | null
+  address: string
+  phone: string | null
+  email: string | null
+  receipt_note: string | null
+}
+
+/**
+ * Persist the identity form to the database (`role:pimpinan`). The endpoint
+ * replaces the whole row and the form has no controls for `website` or
+ * `receipt_template`, so the current row is read first to carry those values
+ * through instead of wiping them on every save.
+ */
+export async function saveSchoolProfile(identity: SchoolProfileIdentity): Promise<SchoolProfile> {
+  const current = await fetchSchoolProfile()
+  const { data } = await api.post<{ data: SchoolProfile }>('/pimpinan/sekolah-profile', {
+    ...identity,
+    website: current.website,
+    receipt_template: current.receipt_template,
+  })
+  return data.data
+}
+
+/** Upload the school logo to the server (`role:pimpinan`); replaces any previous file. */
+export async function uploadSchoolLogo(file: File): Promise<SchoolProfile> {
+  const body = new FormData()
+  body.append('logo', file)
+  const { data } = await api.post<{ data: SchoolProfile }>(
+    '/pimpinan/sekolah-profile/upload-logo',
+    body,
+  )
   return data.data
 }
 

@@ -37,6 +37,46 @@ export function readProfile(): Profile {
   };
 }
 
+/**
+ * Read-only data snapshots kept for instant first paint. The session keys
+ * (`cendekia-token`, `cendekia-user`) and the small preferences
+ * (`cendekia-academic-year`, `cendekia-read-notices`) are deliberately absent:
+ * clearing the cache must never sign the user out or reset their choices.
+ */
+const READ_CACHE_KEYS = [
+  "cendekia-students",
+  "cendekia-transactions",
+  "cendekia-profile",
+  "cendekia-spp-amounts",
+] as const;
+
+/**
+ * Remove every read-only snapshot and return the bytes freed. Failures are
+ * swallowed per key: storage can be unavailable in private mode and one bad
+ * key must not stop the rest.
+ */
+export function clearReadCaches(): number {
+  let freed = 0;
+  for (const key of READ_CACHE_KEYS) {
+    try {
+      const value = localStorage.getItem(key);
+      if (value === null) continue;
+      freed += new Blob([key, value]).size;
+      localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  }
+  return freed;
+}
+
+/** Human-readable size for the cache cleanup toast. */
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
 /** Restore the signed-in user from the persisted session. */
 export function readSessionUser(): AuthUser | null {
   const token = readToken();

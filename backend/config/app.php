@@ -56,6 +56,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | Origin of the React SPA. Links inside the login security email (the
+    | password recovery suggestion) point here, and the post-revocation page
+    | links back to it. The default only suits `npm run dev`; a deployed
+    | server must set FRONTEND_URL to the public address of the frontend.
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

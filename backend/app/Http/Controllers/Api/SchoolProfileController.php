@@ -13,9 +13,12 @@ class SchoolProfileController extends Controller
 {
     public function publicProfile(): JsonResponse
     {
+        // Branding only — every client (signed in or not) reads its identity,
+        // colours, logo and favicon from here, so the whole white-label set
+        // must travel together or another device stays stale.
         return response()->json(['data' => $this->profile()->only([
-            'school_name', 'logo_path', 'favicon_path', 'address', 'phone', 'email', 'website',
-            'theme_primary', 'theme_accent',
+            'school_name', 'foundation_name', 'logo_path', 'favicon_path', 'address', 'phone', 'email', 'website',
+            'receipt_note', 'theme_primary', 'theme_accent',
         ])]);
     }
 

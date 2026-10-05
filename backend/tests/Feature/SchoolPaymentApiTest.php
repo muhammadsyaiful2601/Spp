@@ -340,6 +340,120 @@ class SchoolPaymentApiTest extends TestCase
         $this->assertSame('#c88942', $public->json('data.theme_accent'));
     }
 
+    public function test_leadership_can_update_school_identity_and_it_is_public(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'pimpinan',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'school_name' => 'SDIT Al-Falah',
+            'foundation_name' => 'Yayasan Al-Falah',
+            'address' => 'Jl. Pendidikan No. 1, Bogor',
+            'phone' => '081234567890',
+            'email' => 'sekolah@alfalah.sch.id',
+            'receipt_note' => 'Terima kasih atas pembayarannya.',
+            'receipt_template' => 'termal',
+        ])->assertOk()
+            ->assertJsonPath('data.school_name', 'SDIT Al-Falah')
+            ->assertJsonPath('data.receipt_template', 'termal');
+
+        $this->assertDatabaseHas('school_profiles', [
+            'school_name' => 'SDIT Al-Falah',
+            'foundation_name' => 'Yayasan Al-Falah',
+            'receipt_note' => 'Terima kasih atas pembayarannya.',
+        ]);
+
+        // Every client reads branding through the public endpoint, so the saved
+        // identity must travel there — otherwise other devices stay stale.
+        $this->getJson('/api/v1/public/sekolah-profile')->assertOk()
+            ->assertJsonPath('data.school_name', 'SDIT Al-Falah')
+            ->assertJsonPath('data.foundation_name', 'Yayasan Al-Falah')
+            ->assertJsonPath('data.address', 'Jl. Pendidikan No. 1, Bogor')
+            ->assertJsonPath('data.phone', '081234567890')
+            ->assertJsonPath('data.receipt_note', 'Terima kasih atas pembayarannya.');
+
+        // An identity change must leave an audit row behind.
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'profil_sekolah.ubah',
+            'category' => 'profil_sekolah',
+        ]);
+    }
+
+    public function test_identity_update_requires_a_name_and_an_address(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'pimpinan',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'address' => 'Jl. Tanpa Nama',
+            'receipt_template' => 'standard',
+        ])->assertUnprocessable()->assertJsonValidationErrors('school_name');
+
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'school_name' => 'Tanpa Alamat',
+            'receipt_template' => 'standard',
+        ])->assertUnprocessable()->assertJsonValidationErrors('address');
+    }
+
+    public function test_admin_cannot_update_school_identity(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'admin',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'school_name' => 'Sekolah Terverifikasi',
+            'address' => 'Jl. Admin',
+            'receipt_template' => 'standard',
+        ])->assertForbidden();
+
+        $this->assertDatabaseMissing('school_profiles', ['school_name' => 'Sekolah Terverifikasi']);
+    }
+
+    public function test_leadership_can_upload_a_logo_and_it_is_public(): void
+    {
+        Storage::fake('public');
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'pimpinan',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $first = $this->withToken($token)
+            ->post('/api/v1/pimpinan/sekolah-profile/upload-logo', [
+                'logo' => UploadedFile::fake()->image('logo.png', 120, 120),
+            ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->json('data.logo_path');
+
+        $this->assertNotNull($first);
+        Storage::disk('public')->assertExists($first);
+        $this->assertDatabaseHas('school_profiles', ['logo_path' => $first]);
+        $this->getJson('/api/v1/public/sekolah-profile')
+            ->assertOk()
+            ->assertJsonPath('data.logo_path', $first);
+
+        // Replacing the logo must not leave the old file behind.
+        $second = $this->withToken($token)
+            ->post('/api/v1/pimpinan/sekolah-profile/upload-logo', [
+                'logo' => UploadedFile::fake()->image('logo-2.png', 120, 120),
+            ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->json('data.logo_path');
+
+        $this->assertNotSame($first, $second);
+        Storage::disk('public')->assertMissing($first);
+        Storage::disk('public')->assertExists($second);
+    }
+
     public function test_seeder_creates_only_accounts(): void
     {
         $this->seed();
@@ -842,6 +956,7 @@ class SchoolPaymentApiTest extends TestCase
         // No token may be issued for a suspended account.
         $this->assertSame(0, DB::table('personal_access_tokens')->count());
     }
+
     public function test_the_last_active_treasurer_cannot_be_suspended(): void
     {
         $this->seed();

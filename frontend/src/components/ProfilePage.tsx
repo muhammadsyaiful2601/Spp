@@ -12,9 +12,11 @@ export function ProfilePage({
   onUploadFavicon,
   onRemoveFavicon,
   faviconBusy,
+  logoBusy,
   onSaveTheme,
   themeBusy,
   onSave,
+  profileBusy,
   verification,
 }: {
   profile: Profile;
@@ -23,9 +25,11 @@ export function ProfilePage({
   onUploadFavicon: (file?: File) => void;
   onRemoveFavicon: () => void;
   faviconBusy: boolean;
+  logoBusy: boolean;
   onSaveTheme: (primary: string, accent: string) => void;
   themeBusy: boolean;
   onSave: () => void;
+  profileBusy: boolean;
   /** Rendered above the school identity form; null hides it. */
   verification?: React.ReactNode;
 }) {
@@ -51,13 +55,18 @@ export function ProfilePage({
           </div>
           <div>
             <strong>Logo sekolah</strong>
-            <span>PNG, JPG, atau WebP · Maksimal 2 MB</span>
-            <label className="button button-outline upload-button">
-              <ArrowDownToLine size={15} /> Unggah logo
+            <span>PNG, JPG, atau WebP · Maksimal 2 MB · Tersimpan di server</span>
+            <label className={`button button-outline upload-button ${logoBusy ? "is-busy" : ""}`}>
+              {logoBusy ? <RefreshCw size={15} /> : <ArrowDownToLine size={15} />}
+              {logoBusy ? "Mengunggah" : "Unggah logo"}
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => uploadLogo(event.target.files?.[0])}
+                disabled={logoBusy}
+                onChange={(event) => {
+                  uploadLogo(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
               />
             </label>
           </div>
@@ -299,9 +308,18 @@ export function ProfilePage({
           </div>
         </div>
         <div className="profile-actions">
-          <span>Perubahan identitas tersimpan otomatis di browser ini.</span>
-          <button className="button button-primary" onClick={onSave}>
-            <Check size={16} /> Simpan profil
+          <span>
+            {profileBusy
+              ? "Menyimpan ke server..."
+              : "Tersimpan di server — berlaku untuk seluruh pengguna dan perangkat."}
+          </span>
+          <button
+            className="button button-primary"
+            disabled={profileBusy}
+            onClick={onSave}
+          >
+            {profileBusy ? <RefreshCw size={16} /> : <Check size={16} />}
+            {profileBusy ? "Menyimpan" : "Simpan profil"}
           </button>
         </div>
       </section>

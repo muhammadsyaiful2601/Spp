@@ -119,6 +119,19 @@ Nuansa aplikasi mengikuti identitas **SDIT (Sekolah Dasar Islam Terpadu)**:
 - Kedua warna juga dikembalikan oleh `GET /api/v1/public/sekolah-profile`, sehingga **seluruh pengguna** (termasuk yang belum masuk) melihat tema yang sama.
 - Layar **Profil sekolah** menyediakan preset, color picker bebas, dan pratinjau langsung. Perubahan tampil seketika sebelum disimpan.
 
+### Identitas & logo tersimpan di database
+
+Seluruh branding berada di tabel `school_profiles` — bukan di `localStorage` — sehingga satu instalasi dapat dipakai untuk banyak sekolah (white-label) dan setiap perubahan pimpinan langsung terlihat di semua perangkat:
+
+- `POST /api/v1/pimpinan/sekolah-profile` (`role:pimpinan`) — menyimpan nama sekolah, yayasan, alamat, telepon, email, dan catatan kuitansi. `receipt_template` dan `website` tidak punya kontrol di formulir, jadi nilainya dibaca ulang dan dipertahankan. Audit `profil_sekolah.ubah`.
+- `POST /api/v1/pimpinan/sekolah-profile/upload-logo` (`role:pimpinan`) — mengunggah logo ke disk `public` (`logo_path`); berkas lama otomatis terhapus saat diganti. Audit `profil_sekolah.berkas`.
+- `GET /api/v1/public/sekolah-profile` mengembalikan identitas + `foundation_name` + `receipt_note` + warna + logo + favicon. SPA memakai nilai server sebagai **kebenaran tunggal** (efek mirror di `App.tsx`); `localStorage` (`cendekia-profile`) hanya paint pertama saat request masih berjalan atau server tidak terjangkau.
+- Tombol **Simpan profil** mengirim identitas ke server **dan** mendorong warna tema bila berbeda dari nilai server — tidak ada perubahan branding yang hanya hidup di browser. Tombol **Simpan tema** tetap tersedia untuk menyimpan warna saja.
+- Warna yang hanya dipratinjau (belum disimpan) akan kembali ke nilai server setelah muat ulang — perilaku yang benar; tekan **Simpan tema** atau **Simpan profil** agar bertahan.
+
+> Logo yang selama ini hanya tersimpan di `localStorage` perangkat tidak ikut terpindah, karena memang tidak pernah sampai ke server. Pimpinan cukup mengunggah ulang logo **sekali**; setelah itu tersimpan permanen di database.
+
+
 ### Cara kerja ramp warna
 
 `applyTheme()` di `frontend/src/api.ts` menurunkan seluruh turunan dari dua warna tersebut lalu menulisnya sebagai custom property ke `<html>`:
@@ -440,6 +453,29 @@ Kode 6 digit dikirim ke email lalu diinput di **halaman Profil sekolah**:
     mengacak kode baru dan kode sebelumnya langsung ditolak (422). Pakai selalu
     email **terbaru** di inbox.
 
+### Peringatan masuk (email keamanan)
+
+Setiap **login berhasil** mengirim email ke alamat pemilik akun — **hanya jika email sudah terverifikasi** (`email_verified_at` terisi). Akun seed yang belum verifikasi sengaja tidak menerima email ini.
+
+Isi email (Bahasa Indonesia):
+
+- **Waktu (WIB), alamat IP, dan perangkat** (hasil pembacaan `User-Agent`, mis. `Google Chrome di Windows`) — agar pembaca bisa mencocokkan dengan aktivitasnya sendiri. Waktu ditampilkan dalam WIB meski server menyimpan UTC.
+- Instruksi: *"Jika Anda sendiri yang baru masuk, abaikan email ini."*
+- Tombol **"Bukan saya — akhiri seluruh sesi"** menuju halaman konfirmasi bertanda tangan, dan saran segera mengubah kata sandi melalui `FRONTEND_URL/?lupa=1` (frontend langsung membuka layar **Lupa Kata Sandi**).
+
+| Method | Endpoint | Sesi |
+|---|---|---|
+| GET | `/keamanan/keluar-sesi` | tidak perlu — **hanya halaman konfirmasi** |
+| POST | `/keamanan/keluar-sesi` | tidak perlu — dibuktikan tanda tangan |
+
+**Kenapa dua langkah, bukan satu tombol langsung?** GET tidak menyentuh sesi sama sekali. Pembaca email / link scanner (Gmail, Outlook, dsb.) menembakkan GET secara otomatis begitu email terbuka — kalau GET langsung mencabut sesi, pengguna yang *sah* bisa ter-logout dari portal hanya karena membuka inbox. Pencabutan baru terjadi lewat POST dari halaman konfirmasi.
+
+- Keduanya dijaga middleware `signed`, **tanpa `auth`**: penerima mungkin sedang membaca email di perangkat yang belum masuk portal. Tanda tangan membuktikan tautan berasal dari email kita, masih berlaku (`LOGIN_ALERT_LINK_TTL_HOURS`, **default 24 jam**), dan menunjuk akun yang benar — URL tanpa tanda tangan, diutak-atik, atau kedaluwarsa membalas **403**.
+- Konfirmasi mencabut **seluruh** token sesi akun (semua perangkat — kasus kata sandi bocor tidak bisa ditebak dari satu perangkat saja), lalu mencatat audit `akun.keluar_email` dengan akun yang dicabut sebagai aktor. Klik kedua kali tidak menulis audit baru: no-op bukan peristiwa.
+- Kegagalan SMTP **tidak pernah membatalkan login** — dicatat via `report()`, sign-in tetap `200`. Email dikirim **sinkron**, bukan lewat antrean, karena deployment tidak menjalankan queue worker (notification yang di-queue tidak akan pernah terkirim).
+
+Ditutup `LoginAlertEmailTest` (10 tes): kirim / tidak kirim per kondisi akun, isi email + tautan bertanda tangan, halaman GET yang inert, POST yang mencabut + audit, idempotensi, serta 403 untuk URL tanpa tanda tangan, diutak-atik, dan kedaluwarsa.
+
 ### Gate: akun belum verifikasi tidak bisa apa-apa
 
 Middleware `EnsureEmailVerified` membungkus seluruh endpoint setelah `auth/*`. Yang tetap boleh hanya `auth/*`, `public/*`, dan `pimpinan/sekolah-profile` — dipakai halaman profil tempat verifikasi dilakukan.
@@ -608,7 +644,22 @@ php artisan config:cache
 
 > Pada server publik, `EMAIL_VERIFICATION_EXPOSE_CODE` **wajib `false`**. Nilai ini di-cache bersama config di atas.
 
-> Frontend menyimpan cache baca-aja di `localStorage` (`cendekia-students`, `cendekia-transactions`, `cendekia-spp-amounts`, `cendekia-profile`). Hapus key tersebut bila ingin memaksa refresh dari server. Semua angka dashboard (total penerimaan, tunggakan, grafik bulanan) berasal dari database.
+> Frontend menyimpan cache baca-aja di `localStorage` (`cendekia-students`, `cendekia-transactions`, `cendekia-spp-amounts`, `cendekia-profile`). Gunakan tombol **Bersihkan cache** di halaman **Akun saya** untuk menghapusnya sekaligus mengosongkan cache React Query — lihat [Bersihkan cache](#bersihkan-cache). Key juga bisa dihapus manual lewat devtools. Semua angka dashboard (total penerimaan, tunggakan, grafik bulanan) berasal dari database.
+
+## Bersihkan cache
+
+Portal menyimpan dua lapis cache agar tampilan pertama tetap cepat:
+
+1. **`localStorage`** — salinan baca-aja `cendekia-students`, `cendekia-transactions`, `cendekia-spp-amounts`, dan `cendekia-profile`.
+2. **React Query (memori browser)** — semua respons API, dengan `staleTime` 60 detik.
+
+Tombol **Bersihkan cache** pada halaman **Akun saya** (tersedia untuk semua role) membersihkan kedua lapisan sekaligus:
+
+- Menghapus salinan `localStorage` di atas. Sesi (`cendekia-token`, `cendekia-user`) dan preferensi (`cendekia-academic-year`, `cendekia-read-notices`) **tidak disentuh** — pembersihan tidak pernah mengeluarkan pengguna dari akunnya.
+- Membuang query yang tidak sedang dipakai dari memori, lalu mengambil ulang query yang aktif di layar dari server; hasilnya menulis kembali salinan `localStorage` dengan data segar. Tampilan tidak pernah blank — data lama tetap ada sampai data baru tiba.
+- Toast menampilkan perkiraan ukuran yang dibebaskan, misal `Cache dibersihkan (±512 KB). Data dimuat ulang dari server.`
+
+Sisi server **tidak memakai cache sama sekali** (tidak ada pemakaian `Cache::` atau helper `cache()` di backend), sehingga tidak ada artisan cache yang perlu dijalankan — setiap angka dashboard dihitung langsung dari database.
 
 ## Favicon sekolah
 

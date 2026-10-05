@@ -18,6 +18,7 @@ import {
 import {
   activateAcademicYear,
   applyTheme,
+  brandingErrorMessage,
   changePassword,
   clearSession,
   createAcademicYear,
@@ -36,6 +37,7 @@ import {
   normalizeHex,
   publicStorageUrl,
   readToken,
+  saveSchoolProfile,
   saveSchoolTheme,
   setTreasurerActive,
   storeSession,
@@ -43,9 +45,12 @@ import {
   updateAccount,
   updateTreasurer,
   uploadSchoolFavicon,
+  uploadSchoolLogo,
   validateFaviconFile,
   validationMessage,
   type AuthUser,
+  type PublicSchoolProfile,
+  type SchoolProfile,
   type Treasurer,
   createPosition,
   deleteProfilePhoto,
@@ -70,7 +75,7 @@ import {
 } from "./constants";
 import { formatToday } from "./lib/format";
 import { studentSppAmount } from "./lib/students";
-import { readLocal, readProfile, readSessionUser, writeLocal } from "./lib/storage";
+import { clearReadCaches, formatBytes, readLocal, readProfile, readSessionUser, writeLocal } from "./lib/storage";
 import { applyFavicon, faviconErrorMessage } from "./lib/favicon";
 import { buildNotices } from "./lib/notices";
 import LoadingScreen from "./components/LoadingScreen";
@@ -103,7 +108,21 @@ function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(readSessionUser);
   const [authError, setAuthError] = useState("");
   // Login and password recovery are two screens of the same signed-out flow.
-  const [authMode, setAuthMode] = useState<"login" | "forgot">("login");
+  // The security email links to `/?lupa=1` so a reader lands straight on
+  // password recovery; the flag is consumed once and removed from the URL so a
+  // refresh after finishing does not bounce back into the recovery screen.
+  const [authMode, setAuthMode] = useState<"login" | "forgot">(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("lupa") !== "1") return "login";
+    params.delete("lupa");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      query ? `${window.location.pathname}?${query}` : window.location.pathname,
+    );
+    return "forgot";
+  });
   const [recoverNotice, setRecoverNotice] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyNotice, setVerifyNotice] = useState("");
@@ -117,9 +136,6 @@ function App() {
     readLocal("cendekia-transactions", initialTransactions),
   );
   const [profile, setProfile] = useState(readProfile);
-  const [usePublicBranding] = useState(
-    () => localStorage.getItem("cendekia-profile") === null,
-  );
   const [sppAmounts, setSppAmounts] = useState<number[]>(() =>
     readLocal("cendekia-spp-amounts", initialSppRates),
   );
@@ -148,6 +164,9 @@ function App() {
     useState<Transaction | null>(null);
   const [faviconBusy, setFaviconBusy] = useState(false);
   const [themeBusy, setThemeBusy] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [cacheBusy, setCacheBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -630,39 +649,37 @@ function App() {
   // to a valid entry during render rather than syncing it in an effect.
   const activeCost =
     positionRates.find((cost) => cost.name === payCost) ?? positionRates[0];
+  // The database is the single source of truth for branding: colours, name,
+  // address, logo and favicon all arrive from `public-school-profile` and
+  // overwrite the local cache whenever the server copy changes. React Query's
+  // structural sharing keeps the same data reference while the server value is
+  // unchanged, so a focus-refetch never clobbers edits still being typed —
+  // the mirror runs only on first load or after an actual save (here or on
+  // another device). localStorage remains only the first paint while the
+  // request is in flight or the server is unreachable.
   useEffect(() => {
-    const publicProfile = schoolProfileQuery.data;
-    if (!publicProfile || !usePublicBranding) return;
+    const server = schoolProfileQuery.data;
+    if (!server) return;
     startTransition(() => {
-      setProfile((current) => ({
-        ...current,
-        school: publicProfile.school_name || current.school,
-        address: publicProfile.address || current.address,
-        phone: publicProfile.phone || current.phone,
-        email: publicProfile.email || current.email,
-        themePrimary: publicProfile.theme_primary || current.themePrimary,
-        themeAccent: publicProfile.theme_accent || current.themeAccent,
-        logo: publicProfile.logo_path
-          ? publicStorageUrl(publicProfile.logo_path)
-          : current.logo,
-        favicon: current.favicon,
+      setProfile(() => ({
+        school: server.school_name,
+        foundation: server.foundation_name ?? "",
+        address: server.address,
+        phone: server.phone ?? "",
+        email: server.email ?? "",
+        note: server.receipt_note ?? "",
+        themePrimary: server.theme_primary,
+        themeAccent: server.theme_accent,
+        logo: server.logo_path ? publicStorageUrl(server.logo_path) : "",
+        favicon: server.favicon_path
+          ? publicStorageUrl(server.favicon_path)
+          : "",
       }));
     });
-  }, [schoolProfileQuery.data, usePublicBranding]);
+  }, [schoolProfileQuery.data]);
   useEffect(() => {
     applyTheme(effectiveTheme.primary, effectiveTheme.accent);
   }, [effectiveTheme.primary, effectiveTheme.accent]);
-  useEffect(() => {
-    const remoteFavicon = schoolProfileQuery.data?.favicon_path;
-    if (!remoteFavicon) return;
-    startTransition(() => {
-      setProfile((current) =>
-        current.favicon === publicStorageUrl(remoteFavicon)
-          ? current
-          : { ...current, favicon: publicStorageUrl(remoteFavicon) },
-      );
-    });
-  }, [schoolProfileQuery.data?.favicon_path]);
   useEffect(() => {
     applyFavicon(profile.favicon, profile.logo);
   }, [profile.favicon, profile.logo]);
@@ -940,8 +957,8 @@ function App() {
     setModal(null);
     setToast("Data siswa berhasil ditambahkan.");
   }
-  function uploadLogo(file?: File) {
-    if (!file) return;
+  async function uploadLogo(file?: File) {
+    if (!file || logoBusy) return;
     if (
       !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
       file.size > 2 * 1024 * 1024
@@ -949,10 +966,27 @@ function App() {
       setToast("Gunakan PNG, JPG, atau WebP maksimal 2 MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () =>
-      setProfile((value) => ({ ...value, logo: String(reader.result) }));
-    reader.readAsDataURL(file);
+    if (currentUser?.role !== "pimpinan") {
+      setToast("Hanya pimpinan yang dapat mengubah logo.");
+      return;
+    }
+    // The logo must live on the server: a data URL kept only in this browser
+    // would never reach receipts, the login screen of another device, or the
+    // public profile every client reads.
+    setLogoBusy(true);
+    try {
+      const saved = await uploadSchoolLogo(file);
+      setProfile((value) => ({
+        ...value,
+        logo: saved.logo_path ? publicStorageUrl(saved.logo_path) : "",
+      }));
+      await queryClient.invalidateQueries({ queryKey: ["public-school-profile"] });
+      setToast("Logo sekolah berhasil diperbarui.");
+    } catch (error) {
+      setToast(brandingErrorMessage(error, "Logo gagal diunggah. Coba lagi."));
+    } finally {
+      setLogoBusy(false);
+    }
   }
   async function handleFaviconUpload(file?: File) {
     if (!file || faviconBusy) return;
@@ -1000,6 +1034,81 @@ function App() {
       setFaviconBusy(false);
     }
   }
+  /**
+   * Push the identity form to the database. The same button also carries the
+   * theme colours when they differ from the server value: the editor presents
+   * colours and identity as one branding screen, and historically the colour
+   * preview only lived in localStorage here — silently reverting to the server
+   * default on the next reload.
+   */
+  async function handleProfileSave() {
+    if (profileBusy) return;
+    if (currentUser?.role !== "pimpinan") {
+      setToast("Hanya pimpinan yang dapat mengubah identitas sekolah.");
+      return;
+    }
+    if (!profile.school.trim() || !profile.address.trim()) {
+      setToast("Nama sekolah dan alamat wajib diisi.");
+      return;
+    }
+    setProfileBusy(true);
+    try {
+      let saved: SchoolProfile;
+      try {
+        saved = await saveSchoolProfile({
+          school_name: profile.school.trim(),
+          foundation_name: profile.foundation.trim() || null,
+          address: profile.address.trim(),
+          phone: profile.phone.trim() || null,
+          email: profile.email.trim() || null,
+          receipt_note: profile.note.trim() || null,
+        });
+      } catch (error) {
+        setToast(
+          brandingErrorMessage(error, "Profil sekolah gagal disimpan. Coba lagi."),
+        );
+        return;
+      }
+      setProfile((value) => ({
+        ...value,
+        school: saved.school_name,
+        foundation: saved.foundation_name ?? "",
+        address: saved.address,
+        phone: saved.phone ?? "",
+        email: saved.email ?? "",
+        note: saved.receipt_note ?? "",
+      }));
+
+      try {
+        const server = queryClient.getQueryData<PublicSchoolProfile>([
+          "public-school-profile",
+        ]);
+        const primary = normalizeHex(profile.themePrimary, "#24634e");
+        const accent = normalizeHex(profile.themeAccent, "#c88942");
+        if (
+          server &&
+          (primary !== server.theme_primary || accent !== server.theme_accent)
+        ) {
+          await saveSchoolTheme(primary, accent);
+        }
+      } catch (error) {
+        // The identity half made it; say so instead of reporting a total failure.
+        await queryClient.invalidateQueries({ queryKey: ["public-school-profile"] });
+        setToast(
+          brandingErrorMessage(
+            error,
+            "Identitas tersimpan, tetapi tema warna gagal disimpan.",
+          ),
+        );
+        return;
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["public-school-profile"] });
+      setToast("Profil sekolah berhasil disimpan ke server.");
+    } finally {
+      setProfileBusy(false);
+    }
+  }
   async function handleThemeSave(primary: string, accent: string) {
     if (themeBusy) return;
     if (currentUser?.role !== "pimpinan") {
@@ -1024,14 +1133,48 @@ function App() {
       await queryClient.invalidateQueries({ queryKey: ["public-school-profile"] });
       setToast("Tema warna berhasil disimpan untuk semua pengguna.");
     } catch (error) {
-      setProfile((value) => ({
-        ...value,
-        themePrimary: profile.themePrimary,
-        themeAccent: profile.themeAccent,
-      }));
-      setToast(faviconErrorMessage(error));
+      // Roll the preview back to what the server actually holds. Restoring the
+      // same (already-overwritten) buffer values would leave the CSS showing
+      // colours that were never saved.
+      const server = queryClient.getQueryData<PublicSchoolProfile>([
+        "public-school-profile",
+      ]);
+      if (server) {
+        setProfile((value) => ({
+          ...value,
+          themePrimary: server.theme_primary,
+          themeAccent: server.theme_accent,
+        }));
+        applyTheme(server.theme_primary, server.theme_accent);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["public-school-profile"] });
+      setToast(brandingErrorMessage(error, "Tema warna gagal disimpan. Coba lagi."));
     } finally {
       setThemeBusy(false);
+    }
+  }
+  /**
+   * Free both cache layers so the portal runs on fresh server data: the
+   * read-only localStorage snapshots (session keys and small preferences are
+   * deliberately kept) and the React Query entries no screen is looking at.
+   * The queries still on screen refetch from the server, and their results
+   * rewrite the localStorage snapshots — nothing stays stale anywhere.
+   */
+  async function handleClearCache() {
+    if (cacheBusy) return;
+    setCacheBusy(true);
+    try {
+      const freed = clearReadCaches();
+      queryClient.removeQueries({
+        predicate: (query) => query.getObserversCount() === 0,
+      });
+      // Active queries keep their current data on screen while reloading, so
+      // clearing never blanks the page; throwOnError keeps a flaky network
+      // from turning the toast into an unhandled rejection.
+      await queryClient.invalidateQueries(undefined, { throwOnError: false });
+      setToast(`Cache dibersihkan (±${formatBytes(freed)}). Data dimuat ulang dari server.`);
+    } finally {
+      setCacheBusy(false);
     }
   }
   async function handleLogout() {
@@ -1594,7 +1737,9 @@ async function handlePhotoUpload(file: File) {
               faviconBusy={faviconBusy}
               onSaveTheme={handleThemeSave}
               themeBusy={themeBusy}
-              onSave={() => setToast("Profil sekolah berhasil disimpan.")}
+              onSave={handleProfileSave}
+              profileBusy={profileBusy}
+              logoBusy={logoBusy}
             />
           )}
           {effectivePage === "akun" && (
@@ -1613,6 +1758,8 @@ async function handlePhotoUpload(file: File) {
               onRemovePhoto={handlePhotoRemove}
               photoBusy={photoBusy}
               photoError={photoError}
+              onClearCache={handleClearCache}
+              cacheBusy={cacheBusy}
             />
           )}
         </section>

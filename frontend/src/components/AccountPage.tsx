@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Camera, Check, Clock, LogOut, RefreshCw, ShieldCheck, Trash2, UserCog } from "lucide-react";
+import { Camera, Check, Clock, Database, LogOut, RefreshCw, ShieldCheck, Trash2, UserCog } from "lucide-react";
 import type { AuthUser, AccountDetails } from "../api";
 import Avatar from "./Avatar";
 
@@ -20,6 +20,8 @@ export function AccountPage({
   onRemovePhoto,
   photoBusy = false,
   photoError = "",
+  onClearCache,
+  cacheBusy = false,
 }: {
   account?: AccountDetails;
   fallback: AuthUser;
@@ -39,6 +41,8 @@ export function AccountPage({
   onRemovePhoto: () => void;
   photoBusy: boolean;
   photoError: string;
+  onClearCache: () => void;
+  cacheBusy: boolean;
 }) {
   // Until `/auth/me` resolves, render from the session copy so the page is never
   // blank. `username` is only a placeholder until the server value arrives.
@@ -359,6 +363,33 @@ export function AccountPage({
           >
             <LogOut size={15} /> Keluar dari perangkat ini
           </button>
+        </section>
+
+        <section className="panel account-card">
+          <div className="panel-heading">
+            <div>
+              <h2>Bersihkan cache</h2>
+              <p>
+                Hapus salinan data (siswa, transaksi, tarif, profil) di browser
+                ini lalu muat ulang dari server. Sesi dan preferensi tetap aman.
+              </p>
+            </div>
+            <div className="metric-icon green">
+              <Database size={17} />
+            </div>
+          </div>
+          <div className="profile-actions">
+            <span>Berlaku untuk browser ini saja.</span>
+            <button
+              type="button"
+              className="button button-outline"
+              disabled={cacheBusy}
+              onClick={onClearCache}
+            >
+              {cacheBusy ? <RefreshCw size={15} /> : <Database size={15} />}
+              {cacheBusy ? "Membersihkan..." : "Bersihkan cache"}
+            </button>
+          </div>
         </section>
       </div>
     </div>

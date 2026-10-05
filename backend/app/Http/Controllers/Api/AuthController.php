@@ -4,16 +4,19 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Notifications\LoginAlertNotification;
 use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\PersonalAccessToken;
+use Throwable;
 
 class AuthController extends Controller
 {
@@ -58,6 +61,8 @@ class AuthController extends Controller
         $token = $user->createToken('school-portal')->plainTextToken;
 
         ActivityLogger::record('akun.masuk', 'akun', 'Masuk ke portal.');
+
+        $this->sendLoginAlert($request, $user);
 
         return response()->json(['data' => ['user' => $user, 'token' => $token, 'token_type' => 'Bearer']]);
     }
@@ -259,5 +264,34 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Kata sandi berhasil diubah. Sesi lain telah dikeluarkan.',
         ]);
+    }
+
+    /**
+     * Send the "was this you?" security notice after a successful sign-in.
+     *
+     * Only proven addresses get mail: an unverified address has never shown it
+     * reaches a real inbox, and the seeded placeholder domains would only bounce
+     * or train people to ignore these alerts.
+     *
+     * Failures are reported, never thrown — the sign-in itself already
+     * succeeded, and an SMTP outage must not turn working credentials into a
+     * 500. Sent synchronously on purpose: this deployment runs without a queue
+     * worker, so a queued notification would sit in the jobs table forever.
+     */
+    private function sendLoginAlert(Request $request, User $user): void
+    {
+        if (! $user->email_verified_at) {
+            return;
+        }
+
+        try {
+            Notification::send($user, new LoginAlertNotification(
+                (string) $request->ip(),
+                (string) $request->userAgent(),
+                now(),
+            ));
+        } catch (Throwable $exception) {
+            report($exception);
+        }
     }
 }
