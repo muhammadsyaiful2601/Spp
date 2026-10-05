@@ -681,3 +681,15 @@ Berkas tersimpan pada disk `public` dan disajikan lewat `/storage/...` (jalankan
 Judul tab juga ikut mengikuti nama sekolah (`<title>` = `{nama sekolah} · Portal Keuangan`) melalui `useEffect` pada `profile.school`.
 
 > Browser melakukan cache secara agresif terhadap favicon. Setelah mengunggah favicon baru, muat ulang dengan **hard reload** (`Ctrl+Shift+R`) bila tab masih menampilkan ikon lama.
+
+## Kontributor
+
+Proyek ini dikembangkan oleh manusia bersama empat asisten AI:
+
+| Kontributor | Peran |
+| --- | --- |
+| [muhammadsyaiful2601](https://github.com/muhammadsyaiful2601) | Pemilik & pengembang utama |
+| [Muse Spark](https://developers.google.com/gemini) (Google) | Asisten AI |
+| [Claude](https://claude.ai) (Anthropic) | Asisten AI |
+| [ChatGPT](https://chat.openai.com) (OpenAI) | Asisten AI |
+| [Muse](https://github.com/features/copilot) (GitHub) | Asisten AI |
