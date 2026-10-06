@@ -1,4 +1,4 @@
-import { ArrowDownToLine, Building2, Check, ReceiptText, RefreshCw, ShieldCheck, Sparkles, Trash, Upload } from "lucide-react";
+import { Building2, Check, ReceiptText, RefreshCw, ShieldCheck, Sparkles, Trash, Upload } from "lucide-react";
 import type { Profile } from "../types";
 import { MosqueMark, StarMotif } from "./icons";
 import { applyTheme, normalizeHex, themePresets } from "../api";
@@ -19,9 +19,10 @@ export function ProfilePage({
   profileBusy,
   verification,
   /**
-   * Only `pimpinan` may change branding. When false the identity form, logo,
-   * favicon and theme controls render read-only so `admin` can verify their
-   * email on this screen without ever touching school branding.
+   * Only `pimpinan` may see or touch branding. When false the logo, favicon
+   * and theme sections are hidden entirely (not just disabled) so `admin`
+   * never sees controls they must not use, and can verify their email on
+   * this screen without confusion.
    */
   canEditBranding = true,
 }: {
@@ -56,6 +57,8 @@ export function ProfilePage({
           <p className="form-error">Hanya pimpinan yang dapat mengubah identitas sekolah.</p>
         )}
         <fieldset disabled={!canEditBranding} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+        {canEditBranding && (
+        <div className="branding-block">
         <div className="logo-field">
           <div className="logo-preview">
             {profile.logo ? (
@@ -67,23 +70,19 @@ export function ProfilePage({
           <div>
             <strong>Logo sekolah</strong>
             <span>PNG, JPG, atau WebP · Maksimal 2 MB · Tersimpan di server</span>
-            {canEditBranding ? (
-              <label className={`button button-outline upload-button ${logoBusy ? "is-busy" : ""}`}>
-                {logoBusy ? <RefreshCw size={15} /> : <ArrowDownToLine size={15} />}
-                {logoBusy ? "Mengunggah" : "Unggah logo"}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  disabled={logoBusy}
-                  onChange={(event) => {
-                    uploadLogo(event.target.files?.[0]);
-                    event.target.value = "";
-                  }}
-                />
-              </label>
-            ) : (
-              <span>Hanya pimpinan yang dapat mengubah logo.</span>
-            )}
+            <label className={`button button-outline upload-button ${logoBusy ? "is-busy" : ""}`}>
+              {logoBusy ? <RefreshCw size={15} /> : <Upload size={15} />}
+              {logoBusy ? "Mengunggah" : "Unggah logo"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={logoBusy}
+                onChange={(event) => {
+                  uploadLogo(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+              />
+            </label>
           </div>
         </div>
         <div className="favicon-field">
@@ -104,8 +103,6 @@ export function ProfilePage({
                   : "Belum diatur — tab browser memakai ikon bawaan."}
             </span>
             <div className="favicon-actions">
-              {canEditBranding ? (
-                <>
                   <label className={`button button-outline upload-button ${faviconBusy ? "is-busy" : ""}`}>
                     {faviconBusy ? <RefreshCw size={15} /> : <Upload size={15} />}
                     {faviconBusy ? "Menyimpan" : "Unggah favicon"}
@@ -128,10 +125,6 @@ export function ProfilePage({
                     >
                   <Trash size={15} /> Kembalikan bawaan
                 </button>
-              )}
-                </>
-              ) : (
-                <span>Hanya pimpinan yang dapat mengubah favicon.</span>
               )}
             </div>
           </div>
@@ -161,8 +154,6 @@ export function ProfilePage({
             <StarMotif size={16} />
           </div>
 
-          {canEditBranding ? (
-            <>
               <div className="theme-presets">
             {themePresets.map((preset) => {
               const active =
@@ -241,10 +232,6 @@ export function ProfilePage({
               {themeBusy ? "Menyimpan" : "Simpan tema"}
             </button>
           </div>
-            </>
-          ) : (
-            <span>Hanya pimpinan yang dapat mengubah tema warna.</span>
-          )}
 
           <div className="theme-preview" aria-hidden="true">
             <div className="theme-preview-bar">
@@ -261,6 +248,8 @@ export function ProfilePage({
           </div>
         </div>
 
+        </div>
+        )}
         <div className="form-grid">
           <div className="form-field full">
             <label htmlFor="profile-school">Nama sekolah</label>
