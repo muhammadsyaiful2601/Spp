@@ -693,3 +693,26 @@ Proyek ini dikembangkan oleh manusia bersama empat asisten AI:
 | [Claude](https://claude.ai) (Anthropic) | Asisten AI |
 | [ChatGPT](https://chat.openai.com) (OpenAI) | Asisten AI |
 | [Muse](https://github.com/features/copilot) (GitHub) | Asisten AI |
+
+## Data dummy pengetesan
+
+Seeder `DummyHistorySeeder` mengisi tiga tahun ajaran histori
+(2023/2024–2025/2026) dengan 180 siswa (30 per kelas), tarif, 6.480 tagihan
+SPP, 2.700 tagihan non-SPP, dan ±8.200 transaksi berpola realistis
+(~83% bulan SPP lunas, 108 tagihan berstatus `sebagian`) sehingga
+dashboard, grafik, dan laporan bisa diuji dengan isi yang menyerupai
+data nyata. Tarif histori dimundurkan ~5% per tahun dari tarif aktif
+agar tren grafik terlihat naik.
+
+```powershell
+cd backend
+php artisan db:seed --class=DummyHistorySeeder
+```
+
+- **Hanya untuk lokal/pengetesan** — jangan dijalankan di produksi karena
+  mengacak nomor transaksi dan menambah ratusan baris.
+- **Idempoten** — aman dijalankan ulang; baris dummy sebelumnya (prefix
+  `DUM-`) dihapus dulu sebelum diisi kembali.
+- **Tidak merusak test suite** — seeder ini tidak dipanggil dari
+  `DatabaseSeeder`, jadi `migrate --seed` dan `php artisan test` tetap
+  memakai data minimal yang cepat.
