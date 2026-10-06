@@ -18,6 +18,12 @@ export function ProfilePage({
   onSave,
   profileBusy,
   verification,
+  /**
+   * Only `pimpinan` may change branding. When false the identity form, logo,
+   * favicon and theme controls render read-only so `admin` can verify their
+   * email on this screen without ever touching school branding.
+   */
+  canEditBranding = true,
 }: {
   profile: Profile;
   setProfile: React.Dispatch<React.SetStateAction<Profile>>;
@@ -32,6 +38,7 @@ export function ProfilePage({
   profileBusy: boolean;
   /** Rendered above the school identity form; null hides it. */
   verification?: React.ReactNode;
+  canEditBranding?: boolean;
 }) {
   const activeFavicon = profile.favicon || profile.logo;
   return (
@@ -45,6 +52,10 @@ export function ProfilePage({
           </div>
           <Building2 size={20} />
         </div>
+        {!canEditBranding && (
+          <p className="form-error">Hanya pimpinan yang dapat mengubah identitas sekolah.</p>
+        )}
+        <fieldset disabled={!canEditBranding} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <div className="logo-field">
           <div className="logo-preview">
             {profile.logo ? (
@@ -56,19 +67,23 @@ export function ProfilePage({
           <div>
             <strong>Logo sekolah</strong>
             <span>PNG, JPG, atau WebP · Maksimal 2 MB · Tersimpan di server</span>
-            <label className={`button button-outline upload-button ${logoBusy ? "is-busy" : ""}`}>
-              {logoBusy ? <RefreshCw size={15} /> : <ArrowDownToLine size={15} />}
-              {logoBusy ? "Mengunggah" : "Unggah logo"}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                disabled={logoBusy}
-                onChange={(event) => {
-                  uploadLogo(event.target.files?.[0]);
-                  event.target.value = "";
-                }}
-              />
-            </label>
+            {canEditBranding ? (
+              <label className={`button button-outline upload-button ${logoBusy ? "is-busy" : ""}`}>
+                {logoBusy ? <RefreshCw size={15} /> : <ArrowDownToLine size={15} />}
+                {logoBusy ? "Mengunggah" : "Unggah logo"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  disabled={logoBusy}
+                  onChange={(event) => {
+                    uploadLogo(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            ) : (
+              <span>Hanya pimpinan yang dapat mengubah logo.</span>
+            )}
           </div>
         </div>
         <div className="favicon-field">
@@ -89,28 +104,34 @@ export function ProfilePage({
                   : "Belum diatur — tab browser memakai ikon bawaan."}
             </span>
             <div className="favicon-actions">
-              <label className={`button button-outline upload-button ${faviconBusy ? "is-busy" : ""}`}>
-                {faviconBusy ? <RefreshCw size={15} /> : <Upload size={15} />}
-                {faviconBusy ? "Menyimpan" : "Unggah favicon"}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,.ico"
-                  disabled={faviconBusy}
-                  onChange={(event) => {
-                    onUploadFavicon(event.target.files?.[0]);
-                    event.target.value = "";
-                  }}
-                />
-              </label>
-              {profile.favicon && (
-                <button
-                  type="button"
-                  className="button button-ghost"
-                  disabled={faviconBusy}
-                  onClick={onRemoveFavicon}
-                >
+              {canEditBranding ? (
+                <>
+                  <label className={`button button-outline upload-button ${faviconBusy ? "is-busy" : ""}`}>
+                    {faviconBusy ? <RefreshCw size={15} /> : <Upload size={15} />}
+                    {faviconBusy ? "Menyimpan" : "Unggah favicon"}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,.ico"
+                      disabled={faviconBusy}
+                      onChange={(event) => {
+                        onUploadFavicon(event.target.files?.[0]);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {profile.favicon && (
+                    <button
+                      type="button"
+                      className="button button-ghost"
+                      disabled={faviconBusy}
+                      onClick={onRemoveFavicon}
+                    >
                   <Trash size={15} /> Kembalikan bawaan
                 </button>
+              )}
+                </>
+              ) : (
+                <span>Hanya pimpinan yang dapat mengubah favicon.</span>
               )}
             </div>
           </div>
@@ -140,7 +161,9 @@ export function ProfilePage({
             <StarMotif size={16} />
           </div>
 
-          <div className="theme-presets">
+          {canEditBranding ? (
+            <>
+              <div className="theme-presets">
             {themePresets.map((preset) => {
               const active =
                 preset.primary === profile.themePrimary &&
@@ -218,6 +241,10 @@ export function ProfilePage({
               {themeBusy ? "Menyimpan" : "Simpan tema"}
             </button>
           </div>
+            </>
+          ) : (
+            <span>Hanya pimpinan yang dapat mengubah tema warna.</span>
+          )}
 
           <div className="theme-preview" aria-hidden="true">
             <div className="theme-preview-bar">
@@ -322,6 +349,7 @@ export function ProfilePage({
             {profileBusy ? "Menyimpan" : "Simpan profil"}
           </button>
         </div>
+        </fieldset>
       </section>
       <aside className="profile-aside">
         <div className="preview-label">

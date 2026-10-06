@@ -1743,6 +1743,7 @@ async function handlePhotoUpload(file: File) {
                   onVerify={handleVerifyEmail}
                 />
               }
+              canEditBranding={currentUser?.role === "pimpinan"}
               profile={profile}
               setProfile={setProfile}
               uploadLogo={uploadLogo}

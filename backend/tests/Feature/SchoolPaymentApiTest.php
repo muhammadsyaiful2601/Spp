@@ -478,6 +478,34 @@ class SchoolPaymentApiTest extends TestCase
         $this->withToken($token)->getJson('/api/v1/admin/siswa')->assertOk();
     }
 
+    public function test_admin_cannot_upload_or_remove_school_branding_files(): void
+    {
+        Storage::fake('public');
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'admin',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $this->withToken($token)
+            ->post('/api/v1/pimpinan/sekolah-profile/upload-logo', [
+                'logo' => UploadedFile::fake()->image('logo.png', 120, 120),
+            ], ['Accept' => 'application/json'])
+            ->assertForbidden();
+
+        $this->withToken($token)
+            ->post('/api/v1/pimpinan/sekolah-profile/upload-favicon', [
+                'favicon' => UploadedFile::fake()->image('favicon.png', 32, 32),
+            ], ['Accept' => 'application/json'])
+            ->assertForbidden();
+
+        $this->withToken($token)
+            ->deleteJson('/api/v1/pimpinan/sekolah-profile/favicon')
+            ->assertForbidden();
+
+        $this->assertDatabaseMissing('school_profiles', ['logo_path' => 'logo.png']);
+    }
+
     public function test_non_spp_installments_track_remaining_balance_and_reject_overpayment(): void
     {
         $this->seed();
