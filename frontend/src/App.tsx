@@ -1340,8 +1340,13 @@ async function handlePhotoUpload(file: File) {
       setToast("Email terverifikasi. Seluruh fitur portal kini aktif.");
       setPage("dashboard");
     } catch (error) {
+      // Same three-way split as login: a 429 means the throttle is doing its
+      // job — the code may even be right — so blaming it would send people
+      // re-typing a correct code into a locked endpoint.
       setVerifyError(
-        validationMessage(error, "code") ?? "Kode verifikasi ditolak. Coba lagi.",
+        isRateLimited(error)
+          ? "Terlalu banyak percobaan verifikasi. Tunggu satu menit, lalu coba lagi."
+          : validationMessage(error, "code") ?? "Kode verifikasi ditolak. Coba lagi.",
       );
     } finally {
       setVerifyBusy(false);
@@ -1444,9 +1449,14 @@ async function handlePhotoUpload(file: File) {
                 "Jika data tersebut terdaftar, kode atur ulang sudah dikirim ke email akun.",
               );
             } catch (error) {
+              // A 429 here means this IP asked too often — the request may
+              // never have reached the mailer, so the generic "failed" wording
+              // would be wrong about what happened.
               setAuthError(
-                validationMessage(error, "identifier") ??
-                  "Permintaan gagal. Silakan coba beberapa saat lagi.",
+                isRateLimited(error)
+                  ? "Terlalu banyak permintaan. Tunggu satu menit, lalu coba lagi."
+                  : validationMessage(error, "identifier") ??
+                    "Permintaan gagal. Silakan coba beberapa saat lagi.",
               );
             }
           }}
@@ -1462,9 +1472,11 @@ async function handlePhotoUpload(file: File) {
               setAuthMode("login");
             } catch (error) {
               setAuthError(
-                validationMessage(error, "token") ??
-                  validationMessage(error, "password") ??
-                  "Kode tidak berlaku. Minta kode baru lalu coba lagi.",
+                isRateLimited(error)
+                  ? "Terlalu banyak percobaan reset. Tunggu satu menit, lalu coba lagi."
+                  : validationMessage(error, "token") ??
+                    validationMessage(error, "password") ??
+                    "Kode tidak berlaku. Minta kode baru lalu coba lagi.",
               );
               throw error;
             }

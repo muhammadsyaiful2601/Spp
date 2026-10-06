@@ -479,7 +479,7 @@ Isi email (Bahasa Indonesia):
 
 Ditutup `LoginAlertEmailTest` (12 tes): kirim / tidak kirim per kondisi akun, isi email + tautan bertanda tangan, halaman GET yang inert, POST yang mencabut + audit, idempotensi, 403 untuk URL tanpa tanda tangan, diutak-atik, dan kedaluwarsa, serta dua tes throttle login di bawah.
 
-### Proteksi brute-force (throttle login)
+### Proteksi brute-force (throttle rute auth)
 
 Audit keamanan menemukan satu lubang nyata: `POST /api/v1/auth/login` **tidak punya batas percobaan** — kata sandi bisa ditebak berapa pun tanpa hambatan (SQL injection, XSS, dan CSRF sudah aman: query memakai binding, output di-escape, token `@csrf` terpasang).
 
@@ -493,6 +493,22 @@ Detail yang disengaja:
 - Setelah jendela satu menit berlalu, hitungan reset otomatis — tidak ada mekanisme unlock manual.
 
 Ditutup dua tes di `LoginAlertEmailTest`: 10 kegagalan beruntun dijawab normal (422), percobaan ke-11 kena throttle (429 JSON, bukan HTML), dan login dengan kredensial benar tetap berhasil setelah jendela throttle terbuka.
+
+#### Putaran kedua: tiga rute auth sisanya
+
+Audit ulang menemukan celah serupa pada endpoint yang menjawab tebakan terhadap rahasia berukuran tetap:
+
+| Rute | Batas | Alasan |
+|---|---|---|
+| `POST /auth/verification/verify` | `throttle:10,1` | Kode hanya **6 digit** (10⁶ kombinasi), berlaku 30 menit, dan sebelumnya tanpa lockout sama sekali. Tanpa batas, sesi yang dicuri (password bocor tapi inbox tidak) bisa menyapu seluruh ruang tebakan jauh sebelum kode kedaluwarsa — mengalahkan tujuan verifikasi itu sendiri. |
+| `POST /auth/forgot-password` | `throttle:5,1` | Endpoint anonim: **setiap request mengirim email dan merotasi token reset** (`updateOrInsert`). Tanpa batas, ini jadi alat mail-bombing sekaligus cara membunuh kode reset yang sah di inbox korban. Sengaja lebih ketat dari login karena tiap hit punya efek nyata. |
+| `POST /auth/reset-password` | `throttle:10,1` | Defence-in-depth. Token 64 karakter acak membuat tebakan tidak praktis, tapi rute tetap menerima hard stop yang sama seperti seluruh permukaan auth. |
+
+Catatan: konfigurasi `auth.passwords.users.throttle => 60` yang ada di `config/auth.php` **tidak menolong di sini** — controller pemulihan tidak memakai Password broker (menulis `password_reset_tokens` secara manual), jadi config itu kode mati. Throttle harus ditanam di level rute.
+
+Sama seperti login: per IP, membalas **JSON 429** (bukan halaman error HTML), dan frontend menerjemahkannya lewat `isRateLimited()` — form lupa sandi, reset, dan kartu verifikasi kini menampilkan *"Tunggu satu menit, lalu coba lagi."* alih-alih pesan yang menyesatkan.
+
+Ditutup tiga tes di `SchoolPaymentApiTest`: 10 kode salah dijawab normal (422) lalu percobaan ke-11 kena throttle (429) dan akun tetap belum terverifikasi; 5 permintaan lupa sandi lolos lalu yang ke-6 kena throttle **sebelum mengirim email keenam**; dan 10 token reset salah dijawab 422 lalu yang ke-11 kena throttle — kata sandi tidak pernah berubah.
 
 ### Gate: akun belum verifikasi tidak bisa apa-apa
 

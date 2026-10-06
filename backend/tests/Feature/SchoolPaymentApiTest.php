@@ -1507,6 +1507,38 @@ class SchoolPaymentApiTest extends TestCase
         Notification::assertSentTimes(VerifyEmailNotification::class, 1);
     }
 
+    /**
+     * The emailed proof is only six digits, so guessing must be as capped as
+     * password guessing: ten wrong codes are answered normally (422), the
+     * eleventh trips the route throttle (429) long before the 10^6 space is
+     * swept — and the throttle answers with JSON, never an HTML error page.
+     */
+    public function test_verification_code_guessing_is_rate_limited(): void
+    {
+        $this->seed();
+        Notification::fake();
+        [, $token] = $this->unverifiedUser('tebakkode');
+
+        $this->withToken($token)->postJson('/api/v1/auth/verification/send')->assertOk();
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $this->withToken($token)->postJson('/api/v1/auth/verification/verify', [
+                'code' => str_pad((string) $attempt, 6, '0', STR_PAD_LEFT),
+            ])->assertStatus(422)->assertJsonValidationErrors('code');
+        }
+
+        $this->withToken($token)->postJson('/api/v1/auth/verification/verify', [
+            'code' => '999999',
+        ])
+            ->assertStatus(429)
+            ->assertJsonPath('message', fn (string $message) => $message !== '');
+
+        // The gate is still closed — throttling never verifies anything.
+        $this->assertNull(
+            DB::table('users')->where('username', 'tebakkode')->value('email_verified_at'),
+        );
+    }
+
     // --- Forgot password -------------------------------------------------------
 
     public function test_user_can_recover_a_lost_password(): void
@@ -1602,6 +1634,58 @@ class SchoolPaymentApiTest extends TestCase
         // Exactly one mail went out — the real account. The unknown one sent nothing.
         Notification::assertSentTimes(ResetPasswordNotification::class, 1);
         Notification::assertNotSentTo(new User(['email' => 'tidak-ada']), ResetPasswordNotification::class);
+    }
+
+    /**
+     * Recovery is anonymous, so it is the easiest endpoint to abuse: each hit
+     * sends a real email and rotates the stored token (killing the victim's
+     * legitimate code). Five per minute get through; the sixth is refused
+     * before it can send anything.
+     */
+    public function test_forgot_password_requests_are_rate_limited(): void
+    {
+        $this->seed();
+        Notification::fake();
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])
+                ->assertOk();
+        }
+
+        $blocked = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin']);
+        $blocked
+            ->assertStatus(429)
+            ->assertJsonPath('message', fn (string $message) => $message !== '');
+
+        // Exactly five mails left the building — the sixth was cut off upstream.
+        Notification::assertSentTimes(ResetPasswordNotification::class, 5);
+    }
+
+    /**
+     * Defence in depth on the reset exchange: the token is 64 random
+     * characters, so guessing was never practical — but the endpoint still
+     * gets the same hard stop as the rest of the auth surface.
+     */
+    public function test_reset_password_attempts_are_rate_limited(): void
+    {
+        $this->seed();
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $this->postJson('/api/v1/auth/reset-password', [
+                'token' => str_repeat('a', 64),
+                'password' => 'katabaru123',
+                'password_confirmation' => 'katabaru123',
+            ])->assertStatus(422)->assertJsonValidationErrors('token');
+        }
+
+        $this->postJson('/api/v1/auth/reset-password', [
+            'token' => str_repeat('a', 64),
+            'password' => 'katabaru123',
+            'password_confirmation' => 'katabaru123',
+        ])->assertStatus(429);
+
+        // Nothing was ever reset.
+        $this->assertTrue(Hash::check('password', User::where('username', 'admin')->value('password')));
     }
 
     public function test_resending_is_throttled_briefly_and_then_allowed_again(): void
