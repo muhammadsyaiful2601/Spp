@@ -152,13 +152,14 @@ export function ForgotPasswordPage({
           {step === "request" ? (
             <form className="login-form" onSubmit={submitRequest}>
               <div className="login-field">
-                <label htmlFor="recover-id">Username atau email</label>
+                <label htmlFor="recover-email">Email</label>
                 <div className="login-password-wrap">
                   <input
-                    id="recover-id"
+                    id="recover-email"
+                    type="email"
                     value={identifier}
                     onChange={(event) => setIdentifier(event.target.value)}
-                    placeholder="admin atau admin@sekolah.sch.id"
+                    placeholder="admin@sekolah.sch.id"
                     autoCapitalize="none"
                     required
                   />
@@ -180,7 +181,7 @@ export function ForgotPasswordPage({
                 {busy ? "Mengirim ulang..." : "Kirim ulang tautan"}
               </button>
               <button className="login-back" type="button" onClick={() => setStep("request")}>
-                <ArrowLeft size={13} /> Ganti username / email
+                <ArrowLeft size={13} /> Ganti email
               </button>
               <button
                 className="login-back"
@@ -200,10 +201,11 @@ export function ForgotPasswordPage({
                 <div className="login-password-wrap">
                   <input
                     id="reset-token"
+                    type="password"
                     value={token}
                     onChange={(event) => setToken(event.target.value)}
                     placeholder="Kode 64 karakter"
-                    autoCapitalize="characters"
+                    autoCapitalize="none"
                     required
                   />
                   <KeyRound size={16} />

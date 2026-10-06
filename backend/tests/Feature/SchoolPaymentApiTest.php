@@ -1546,7 +1546,7 @@ class SchoolPaymentApiTest extends TestCase
         $this->seed();
         Notification::fake();
 
-        $send = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])
+        $send = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])
             ->assertOk();
         $token = $send->json('data.dev_code');
         $this->assertSame(64, strlen($token));
@@ -1574,7 +1574,7 @@ class SchoolPaymentApiTest extends TestCase
 
         $user = User::where('username', 'admin')->firstOrFail();
 
-        $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])->assertOk();
+        $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])->assertOk();
 
         Notification::assertSentTo($user, ResetPasswordNotification::class, function (ResetPasswordNotification $notification) use ($user) {
             $mail = $notification->toMail($user);
@@ -1603,7 +1603,7 @@ class SchoolPaymentApiTest extends TestCase
         $activeToken = $admin->createToken('test')->plainTextToken;
         $this->withToken($activeToken)->getJson('/api/v1/auth/me')->assertOk();
 
-        $send = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])->assertOk();
+        $send = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])->assertOk();
         $this->postJson('/api/v1/auth/reset-password', [
             'token' => $send->json('data.dev_code'),
             'password' => 'katabaru123',
@@ -1621,7 +1621,7 @@ class SchoolPaymentApiTest extends TestCase
     public function test_reset_rejects_an_unknown_or_expired_token(): void
     {
         $this->seed();
-        $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])->assertOk();
+        $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])->assertOk();
 
         // Unknown token.
         $this->postJson('/api/v1/auth/reset-password', [
@@ -1649,9 +1649,9 @@ class SchoolPaymentApiTest extends TestCase
         $this->seed();
         Notification::fake();
 
-        $known = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])
+        $known = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])
             ->assertOk();
-        $unknown = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'tidak-ada'])
+        $unknown = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'tidak-ada@example.test'])
             ->assertOk();
 
         // Identical wording and status, so the form cannot enumerate accounts.
@@ -1674,11 +1674,11 @@ class SchoolPaymentApiTest extends TestCase
         Notification::fake();
 
         for ($attempt = 0; $attempt < 5; $attempt++) {
-            $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])
+            $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])
                 ->assertOk();
         }
 
-        $blocked = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin']);
+        $blocked = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test']);
         $blocked
             ->assertStatus(429)
             ->assertJsonPath('message', fn (string $message) => $message !== '');
@@ -1819,7 +1819,7 @@ class SchoolPaymentApiTest extends TestCase
 
         $this->seed();
 
-        $response = $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])
+        $response = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])
             ->assertOk();
 
         $this->assertNull($response->json('data.dev_code'));

@@ -131,19 +131,18 @@ class VerificationController extends Controller
     }
 
     /**
-     * Start password recovery.
+     * Start password recovery via email only.
      *
-     * The response never reveals whether the identifier matched an account.
+     * The response never reveals whether the email matched an account.
      */
     public function forgotPassword(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'identifier' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255'],
         ]);
 
         $user = User::query()
-            ->where('email', $data['identifier'])
-            ->orWhere('username', $data['identifier'])
+            ->where('email', $data['email'])
             ->first();
 
         $token = null;
@@ -171,7 +170,7 @@ class VerificationController extends Controller
         }
 
         return response()->json([
-            'message' => 'Jika data tersebut terdaftar, kode atur ulang telah dikirim ke email.',
+            'message' => 'Jika data tersebut terdaftar, tautan atur ulang telah dikirim ke email.',
             'data' => ['dev_code' => $token ? $this->devHint($token) : null],
         ]);
     }

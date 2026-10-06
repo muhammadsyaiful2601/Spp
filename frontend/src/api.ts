@@ -203,8 +203,8 @@ export function avatarUrl(photoPath: string | null | undefined): string {
  * during support — and a leaked reset code hands over the account. Local
  * testing reads the code from the inbox or the application log instead.
  */
-export async function forgotPassword(identifier: string): Promise<void> {
-  await api.post("/auth/forgot-password", { identifier })
+export async function forgotPassword(email: string): Promise<void> {
+  await api.post("/auth/forgot-password", { email })
 }
 
 export async function resetPassword(input: {

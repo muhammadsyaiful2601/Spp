@@ -1461,10 +1461,10 @@ async function handlePhotoUpload(file: File) {
             setAuthError("");
             setRecoverNotice("");
           }}
-          onRequestCode={async (identifier) => {
+          onRequestCode={async (email) => {
             setAuthError("");
             try {
-              await forgotPassword(identifier);
+              await forgotPassword(email);
               setRecoverNotice(
                 "Jika data tersebut terdaftar, tautan atur ulang sudah dikirim ke email akun.",
               );
@@ -1475,7 +1475,7 @@ async function handlePhotoUpload(file: File) {
               setAuthError(
                 isRateLimited(error)
                   ? "Terlalu banyak permintaan. Tunggu satu menit, lalu coba lagi."
-                  : validationMessage(error, "identifier") ??
+                  : validationMessage(error, "email") ??
                     "Permintaan gagal. Silakan coba beberapa saat lagi.",
               );
             }
