@@ -40,6 +40,32 @@ class LoginAlertEmailTest extends TestCase
         ]);
     }
 
+    /**
+     * Brute-force guard: 10 failed sign-ins from one IP are answered normally
+     * (422), the 11th trips the throttle (429) so password guessing is cut
+     * off. The throttle answers with JSON, never an HTML error page.
+     */
+    public function test_login_is_rate_limited_after_repeated_failures(): void
+    {
+        $this->seed();
+
+        for ($attempt = 1; $attempt <= 10; $attempt++) {
+            $this->loginAs('admin', 'sandi-salah-'.$attempt)->assertStatus(422);
+        }
+
+        $this->loginAs('admin', 'sandi-salah-11')
+            ->assertStatus(429)
+            ->assertJsonPath('message', fn (string $message) => $message !== '');
+    }
+
+    /** A normal sign-in still succeeds — the throttle only bites under abuse. */
+    public function test_login_still_succeeds_with_correct_credentials(): void
+    {
+        $this->seed();
+
+        $this->loginAs('admin')->assertOk();
+    }
+
     /** A signed confirmation URL exactly as the email builds it. */
     private function signOutUrlFor(User $user, ?\DateTimeInterface $expiration = null): string
     {

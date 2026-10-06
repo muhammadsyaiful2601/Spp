@@ -129,6 +129,15 @@ export function isNetworkFailure(error: unknown): boolean {
   return axios.isAxiosError(error) && !error.response
 }
 
+/**
+ * True when the server refused the request with 429 (throttle: too many
+ * attempts). The message Laravel returns is English and developer-facing, so
+ * callers translate it into a friendly local notice.
+ */
+export function isRateLimited(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 429
+}
+
 // --- Account (own profile) ------------------------------------------------
 export type AccountDetails = AuthUser & {
   username: string

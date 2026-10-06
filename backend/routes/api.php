@@ -16,7 +16,11 @@ use App\Http\Controllers\Api\VerificationController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/public/sekolah-profile', [SchoolProfileController::class, 'publicProfile']);
-    Route::post('/auth/login', [AuthController::class, 'login']);
+    // Brute-force guard: 10 attempts per minute per IP. High enough that a real
+    // user mistyping a few times never notices, low enough that password
+    // guessing becomes useless. Applies per IP (not per username) so an
+    // attacker cannot dodge it by rotating usernames.
+    Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
 
     // Password recovery is reachable without a session, so a locked-out user can
     // get back in. The response never reveals whether the account exists.

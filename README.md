@@ -477,7 +477,22 @@ Isi email (Bahasa Indonesia):
 - Konfirmasi mencabut **seluruh** token sesi akun (semua perangkat — kasus kata sandi bocor tidak bisa ditebak dari satu perangkat saja), lalu mencatat audit `akun.keluar_email` dengan akun yang dicabut sebagai aktor. Klik kedua kali tidak menulis audit baru: no-op bukan peristiwa.
 - Kegagalan SMTP **tidak pernah membatalkan login** — dicatat via `report()`, sign-in tetap `200`. Email dikirim **sinkron**, bukan lewat antrean, karena deployment tidak menjalankan queue worker (notification yang di-queue tidak akan pernah terkirim).
 
-Ditutup `LoginAlertEmailTest` (10 tes): kirim / tidak kirim per kondisi akun, isi email + tautan bertanda tangan, halaman GET yang inert, POST yang mencabut + audit, idempotensi, serta 403 untuk URL tanpa tanda tangan, diutak-atik, dan kedaluwarsa.
+Ditutup `LoginAlertEmailTest` (12 tes): kirim / tidak kirim per kondisi akun, isi email + tautan bertanda tangan, halaman GET yang inert, POST yang mencabut + audit, idempotensi, 403 untuk URL tanpa tanda tangan, diutak-atik, dan kedaluwarsa, serta dua tes throttle login di bawah.
+
+### Proteksi brute-force (throttle login)
+
+Audit keamanan menemukan satu lubang nyata: `POST /api/v1/auth/login` **tidak punya batas percobaan** — kata sandi bisa ditebak berapa pun tanpa hambatan (SQL injection, XSS, dan CSRF sudah aman: query memakai binding, output di-escape, token `@csrf` terpasang).
+
+Rutenya kini dibungkus **`throttle:10,1`**: maksimal **10 percobaan login per menit per IP**. Ambang itu sengaja tinggi — pengguna yang salah ketik beberapa kali tidak akan tersentuh — tapi terlalu rendah untuk menebak kata sandi (10 percobaan/menit = 14.400/hari, tetap masuk akal untuk audit rate tapi tidak cukup untuk menembus password yang kuat).
+
+Detail yang disengaja:
+
+- **Per IP, bukan per username** — penyerang tidak bisa menghindari throttle dengan menggilir username. Sebaliknya, satu IP yang memblokir login juga memblokir semua username dari IP itu; itu trade-off yang diterima karena dampaknya hanya satu menit.
+- **Membalas JSON, bukan halaman error HTML** — frontend membaca `429` dan menampilkan *"Terlalu banyak percobaan login. Tunggu satu menit, lalu coba lagi."* (`isRateLimited()` di `frontend/src/api.ts`), bukan pesan "username atau kata sandi tidak sesuai" yang menyesatkan.
+- **Throttle menghitung semua request ke rute itu**, bukan hanya yang gagal — 10 login *berhasil* beruntun dari IP yang sama juga kena batas. Wajar untuk perilaku normal.
+- Setelah jendela satu menit berlalu, hitungan reset otomatis — tidak ada mekanisme unlock manual.
+
+Ditutup dua tes di `LoginAlertEmailTest`: 10 kegagalan beruntun dijawab normal (422), percobaan ke-11 kena throttle (429 JSON, bukan HTML), dan login dengan kredensial benar tetap berhasil setelah jendela throttle terbuka.
 
 ### Gate: akun belum verifikasi tidak bisa apa-apa
 

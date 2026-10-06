@@ -33,6 +33,7 @@ import {
   fetchTreasurers,
   isHexColor,
   isNetworkFailure,
+  isRateLimited,
   login as loginApi,
   logout as logoutApi,
   normalizeHex,
@@ -1495,10 +1496,15 @@ async function handlePhotoUpload(file: File) {
           } catch (error) {
             // A dead/unreachable backend looks identical to a bad password unless
             // we separate the two, which previously sent people hunting for a typo.
+            // A 429 is a third case: the credentials may well be right, but the
+            // login throttle (`throttle:10,1`) has locked this IP for the minute,
+            // so blaming the password would push people into retyping it.
             setAuthError(
               isNetworkFailure(error)
                 ? "Server tidak dapat dihubungi. Pastikan backend berjalan, lalu coba lagi."
-                : "Username atau kata sandi tidak sesuai.",
+                : isRateLimited(error)
+                  ? "Terlalu banyak percobaan login. Tunggu satu menit, lalu coba lagi."
+                  : "Username atau kata sandi tidak sesuai.",
             );
           } finally {
             setAuthLoading(false);
