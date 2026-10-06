@@ -148,14 +148,12 @@ export async function downloadPaymentReport({
   const studentByName = new Map(students.map((student) => [student.name, student]));
   const body = transactions.map((transaction, index) => {
     const student = studentByName.get(transaction.student);
-    const borrower = student
-      ? `${student.name}\n${student.className}`
-      : transaction.student;
 
     return [
       String(index + 1),
       transaction.id,
-      borrower,
+      student?.name ?? transaction.student,
+      student?.className ?? "-",
       transaction.detail,
       rupiah(transaction.amount),
       transaction.status,
@@ -165,8 +163,8 @@ export async function downloadPaymentReport({
 
   autoTable(pdf, {
     startY: 78,
-    head: [["No.", "Kode transaksi", "Siswa", "Rincian pembayaran", "Jumlah", "Status", "Tanggal"]],
-    body: body.length ? body : [["-", "-", "Tidak ada transaksi", "-", "-", "-", "-"]],
+    head: [["No.", "Kode transaksi", "Siswa", "Kelas", "Rincian pembayaran", "Jumlah", "Status", "Tanggal"]],
+    body: body.length ? body : [["-", "-", "Tidak ada transaksi", "-", "-", "-", "-", "-"]],
     margin: { left: margin, right: margin, bottom: 34 },
     theme: "grid",
     styles: {
@@ -186,13 +184,14 @@ export async function downloadPaymentReport({
       halign: "center",
     },
     columnStyles: {
-      0: { cellWidth: 8, halign: "center" },
+      0: { cellWidth: 10, halign: "center" },
       1: { cellWidth: 24 },
-      2: { cellWidth: 38 },
-      3: { cellWidth: 37 },
-      4: { cellWidth: 23, halign: "right" },
-      5: { cellWidth: 20 },
-      6: { cellWidth: 22 },
+      2: { cellWidth: 30 },
+      3: { cellWidth: 18 },
+      4: { cellWidth: 31 },
+      5: { cellWidth: 23, halign: "right" },
+      6: { cellWidth: 18 },
+      7: { cellWidth: 22 },
     },
   });
 
