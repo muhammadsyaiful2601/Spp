@@ -1466,7 +1466,7 @@ async function handlePhotoUpload(file: File) {
             try {
               await forgotPassword(identifier);
               setRecoverNotice(
-                "Jika data tersebut terdaftar, kode atur ulang sudah dikirim ke email akun.",
+                "Jika data tersebut terdaftar, tautan atur ulang sudah dikirim ke email akun.",
               );
             } catch (error) {
               // A 429 here means this IP asked too often — the request may

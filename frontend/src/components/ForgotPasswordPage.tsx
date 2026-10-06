@@ -3,13 +3,14 @@ import { ArrowLeft, ArrowRight, KeyRound, Loader2, Mail, ShieldCheck } from "luc
 import { MosqueMark, StarMotif } from "./icons";
 
 /**
- * Password recovery: request a code, then set a new password with it.
+ * Password recovery: request a link, then set a new password with it.
  *
- * Both steps share one screen so a user holding only the email never has to
- * hunt for a second URL. The server answers identically whether or not the
- * account exists, so the "sent" state is shown either way. Arriving from the
- * emailed `?kode=` link skips the request step and lands here with the code
- * already filled in.
+ * The reset form never opens just because a request was sent: after
+ * "Kirim tautan atur ulang" the screen parks on a "check your email" step and
+ * waits for the emailed `?kode=` link, which lands here with the code already
+ * filled in. The waiting step keeps an explicit manual-entry fallback for
+ * mail clients that cannot open links. The server answers identically whether
+ * or not the account exists, so the same steps are shown either way.
  */
 export function ForgotPasswordPage({
   error,
@@ -30,7 +31,9 @@ export function ForgotPasswordPage({
   onReset: (token: string, password: string) => Promise<void>;
   onBackToLogin: () => void;
 }) {
-  const [step, setStep] = useState<"request" | "reset">(initialToken ? "reset" : "request");
+  const [step, setStep] = useState<"request" | "sent" | "reset">(
+    initialToken ? "reset" : "request",
+  );
   const [identifier, setIdentifier] = useState("");
   const [token, setToken] = useState(initialToken);
   const [password, setPassword] = useState("");
@@ -45,12 +48,26 @@ export function ForgotPasswordPage({
     setBusy(true);
     setLocalError("");
     try {
-      // The token field is never prefilled: a code shown in the browser is a
-      // code that can be read over someone's shoulder or captured in a
-      // screenshot. It is typed from the email like any other code.
+      // A request only parks the screen on the waiting step: the reset form
+      // opens for the emailed link (or the explicit manual fallback), never on
+      // its own. Any code carried by an older link is discarded, because
+      // sending a request rotates the token.
       await onRequestCode(identifier.trim());
       setToken("");
-      setStep("reset");
+      setStep("sent");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Resending from the waiting step: the screen stays parked, only a fresh
+  // email (with a fresh link and code) is produced.
+  const submitResend = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onRequestCode(identifier.trim());
     } finally {
       setBusy(false);
     }
@@ -91,16 +108,18 @@ export function ForgotPasswordPage({
         <div className="login-visual-copy">
           <span className="login-kicker"><StarMotif size={13} /> SEKOLAH DASAR ISLAM TERPADU</span>
           <h1>
-            {step === "request" ? (
-              <>Pemulihan <em>akun.</em></>
-            ) : (
+            {step === "reset" ? (
               <>Kata sandi <em>baru.</em></>
+            ) : (
+              <>Pemulihan <em>akun.</em></>
             )}
           </h1>
           <p>
             {step === "request"
-              ? "Masukkan username atau email. Kode atur ulang dikirim ke email terdaftar."
-              : "Gunakan kode dari email untuk membuat kata sandi baru."}
+              ? "Masukkan username atau email. Tautan atur ulang dikirim ke email terdaftar."
+              : step === "sent"
+                ? "Tautan sudah dikirim. Buka email, lalu klik tautannya untuk melanjutkan."
+                : "Gunakan kode dari email untuk membuat kata sandi baru."}
           </p>
         </div>
         <div className="login-ledger" aria-hidden="true">
@@ -115,11 +134,19 @@ export function ForgotPasswordPage({
         <div className="login-card">
           <span className="login-mobile-brand"><i /> {school}</span>
           <span className="login-overline">PEMULIHAN AKUN</span>
-          <h2>{step === "request" ? "Lupa kata sandi?" : "Buat kata sandi baru"}</h2>
+          <h2>
+            {step === "request"
+              ? "Lupa kata sandi?"
+              : step === "sent"
+                ? "Cek email Anda"
+                : "Buat kata sandi baru"}
+          </h2>
           <p className="login-intro">
             {step === "request"
-              ? "Kami akan mengirim kode verifikasi ke email akun Anda."
-              : "Masukkan kode yang kami kirim, lalu pilih kata sandi baru."}
+              ? "Kami akan mengirim tautan atur ulang ke email akun Anda."
+              : step === "sent"
+                ? "Halaman kata sandi baru terbuka setelah tautan di email diklik."
+                : "Masukkan kode yang kami kirim, lalu pilih kata sandi baru."}
           </p>
 
           {step === "request" ? (
@@ -139,20 +166,32 @@ export function ForgotPasswordPage({
                 </div>
               </div>
               {problem && <p className="login-error" role="alert">{problem}</p>}
-              {notice && <p className="login-notice" role="status">{notice}</p>}
               <button className="login-submit" type="submit" disabled={busy}>
-                {busy ? "Mengirim..." : "Kirim kode atur ulang"}
+                {busy ? "Mengirim..." : "Kirim tautan atur ulang"}
                 <ArrowRight size={17} />
               </button>
-              {notice && (
-                <button
-                  className="login-back"
-                  type="button"
-                  onClick={() => setStep("reset")}
-                >
-                  Sudah punya kode? <ArrowRight size={13} />
-                </button>
-              )}
+            </form>
+          ) : step === "sent" ? (
+            <form className="login-form" onSubmit={submitResend}>
+              {problem && <p className="login-error" role="alert">{problem}</p>}
+              {notice && <p className="login-notice" role="status">{notice}</p>}
+              <button className="login-submit" type="submit" disabled={busy}>
+                {busy ? <Loader2 size={17} className="spin" /> : <Mail size={17} />}
+                {busy ? "Mengirim ulang..." : "Kirim ulang tautan"}
+              </button>
+              <button className="login-back" type="button" onClick={() => setStep("request")}>
+                <ArrowLeft size={13} /> Ganti username / email
+              </button>
+              <button
+                className="login-back"
+                type="button"
+                onClick={() => {
+                  setToken("");
+                  setStep("reset");
+                }}
+              >
+                Tautan tidak bisa diklik? Masukkan kode manual <ArrowRight size={13} />
+              </button>
             </form>
           ) : (
             <form className="login-form" onSubmit={submitReset}>
