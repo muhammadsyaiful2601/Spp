@@ -1,7 +1,9 @@
 import type { ModalKind, Profile, Transaction } from "../types";
-import { Printer, X } from "lucide-react";
+import { Download, Printer, X } from "lucide-react";
 import { money } from "../lib/format";
 import { MosqueMark } from "./icons";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 
 export function ReceiptModal({
   profile,
@@ -13,88 +15,124 @@ export function ReceiptModal({
   receiptTransaction: Transaction;
   setModal: (value: ModalKind) => void;
 }) {
+  async function downloadPDF() {
+    const receiptElement = document.querySelector(
+      ".receipt-paper"
+    ) as HTMLElement;
+    if (!receiptElement) return;
+
+    try {
+      const canvas = await html2canvas(receiptElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const imgWidth = pdfWidth - 20;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      pdf.addImage(imgData, "PNG", 10, 10, imgWidth, imgHeight);
+      pdf.save(`kuitansi-${receiptTransaction.id}.pdf`);
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+    }
+  }
+
   return (
-          <div className="modal-backdrop receipt-backdrop">
-            <section
-              className="modal receipt-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="receipt-title"
-            >
-              <div className="modal-head no-print">
-                <div>
-                  <div className="eyebrow">PEMBAYARAN BERHASIL</div>
-                  <h2 id="receipt-title">Kuitansi pembayaran</h2>
-                </div>
-                <button
-                  className="icon-button"
-                  aria-label="Tutup"
-                  onClick={() => setModal(null)}
-                >
-                  <X size={19} />
-                </button>
-              </div>
-              <div className="receipt-paper">
-                <div className="receipt-brand">
-                  {profile.logo ? (
-                    <img src={profile.logo} alt="Logo sekolah" />
-                  ) : (
-                    <div className="receipt-logo">
-                      <MosqueMark size={21} />
-                    </div>
-                  )}
-                  <div>
-                    <strong>{profile.school}</strong>
-                    <span>{profile.address}</span>
-                    <span>
-                      {profile.phone} · {profile.email}
-                    </span>
-                  </div>
-                </div>
-                <div className="receipt-divider" />
-                <div className="receipt-title">
-                  <h3>BUKTI PEMBAYARAN</h3>
-                  <span>{receiptTransaction.id}</span>
-                </div>
-                <div className="receipt-line">
-                  <span>Nama siswa</span>
-                  <strong>{receiptTransaction.student}</strong>
-                </div>
-                <div className="receipt-line">
-                  <span>Rincian pembayaran</span>
-                  <strong>{receiptTransaction.detail}</strong>
-                </div>
-                <div className="receipt-line">
-                  <span>Tanggal transaksi</span>
-                  <strong>{receiptTransaction.date}</strong>
-                </div>
-                <div className="receipt-total">
-                  <span>Total dibayarkan</span>
-                  <strong>{money(receiptTransaction.amount)}</strong>
-                </div>
-                <p className="receipt-note">{profile.note}</p>
-                <div className="receipt-signature">
-                  <span>Petugas penerima</span>
-                  <strong>Nadia Amalia</strong>
-                </div>
-              </div>
-              <div className="modal-actions no-print">
-                <button
-                  className="button button-outline"
-                  onClick={() => setModal(null)}
-                >
-                  Tutup
-                </button>
-                <button
-                  className="button button-primary"
-                  onClick={() => window.print()}
-                >
-                  <Printer size={16} /> Cetak kuitansi
-                </button>
-              </div>
-            </section>
+    <div className="modal-backdrop receipt-backdrop">
+      <section
+        className="modal receipt-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="receipt-title"
+      >
+        <div className="modal-head no-print">
+          <div>
+            <div className="eyebrow">PEMBAYARAN BERHASIL</div>
+            <h2 id="receipt-title">Kuitansi pembayaran</h2>
           </div>
-        
+          <button
+            className="icon-button"
+            aria-label="Tutup"
+            onClick={() => setModal(null)}
+          >
+            <X size={19} />
+          </button>
+        </div>
+        <div className="receipt-paper">
+          <div className="receipt-brand">
+            {profile.logo ? (
+              <img src={profile.logo} alt="Logo sekolah" />
+            ) : (
+              <div className="receipt-logo">
+                <MosqueMark size={21} />
+              </div>
+            )}
+            <div>
+              <strong>{profile.school}</strong>
+              <span>{profile.address}</span>
+              <span>
+                {profile.phone} · {profile.email}
+              </span>
+            </div>
+          </div>
+          <div className="receipt-divider" />
+          <div className="receipt-title">
+            <h3>BUKTI PEMBAYARAN</h3>
+            <span>{receiptTransaction.id}</span>
+          </div>
+          <div className="receipt-line">
+            <span>Nama siswa</span>
+            <strong>{receiptTransaction.student}</strong>
+          </div>
+          <div className="receipt-line">
+            <span>Rincian pembayaran</span>
+            <strong>{receiptTransaction.detail}</strong>
+          </div>
+          <div className="receipt-line">
+            <span>Tanggal transaksi</span>
+            <strong>{receiptTransaction.date}</strong>
+          </div>
+          <div className="receipt-total">
+            <span>Total dibayarkan</span>
+            <strong>{money(receiptTransaction.amount)}</strong>
+          </div>
+          <p className="receipt-note">{profile.note}</p>
+          <div className="receipt-signature">
+            <span>Petugas penerima</span>
+            <strong>Nadia Amalia</strong>
+          </div>
+        </div>
+        <div className="modal-actions no-print">
+          <button
+            className="button button-outline"
+            onClick={() => setModal(null)}
+          >
+            Tutup
+          </button>
+          <button
+            className="button button-outline"
+            onClick={downloadPDF}
+          >
+            <Download size={16} /> Unduh PDF
+          </button>
+          <button
+            className="button button-primary"
+            onClick={() => window.print()}
+          >
+            <Printer size={16} /> Cetak kuitansi
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
