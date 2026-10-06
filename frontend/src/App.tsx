@@ -1575,7 +1575,7 @@ async function handlePhotoUpload(file: File) {
               </p>
             </div>
             {effectivePage === "dashboard" && (
-              <>
+              <div className="heading-actions">
                 <button
                   className="button button-outline"
                   onClick={() => void exportReport("print", transactions)}
@@ -1588,7 +1588,7 @@ async function handlePhotoUpload(file: File) {
                 >
                   <Download size={16} /> Unduh PDF
                 </button>
-              </>
+              </div>
             )}
             {effectivePage === "siswa" && (
               <button
