@@ -204,29 +204,43 @@ export async function downloadPaymentReport({
   const tableEnd = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
     .lastAutoTable?.finalY ?? 80;
   let signY = tableEnd + 13;
-  if (signY + 31 > pageHeight - 8) {
+  if (signY + 36 > pageHeight - 8) {
     pdf.addPage();
     signY = 20;
   }
 
-  const place = school.address.split(",").slice(-2).join(",").trim();
+  // Blok tanda tangan resmi: tempat + tanggal Indonesia, nama jelas, NIP.
+  const rawPlace = school.address
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(-2)
+    .join(", ");
+  // Alamat bebas — jangan biarkan placeholder seperti "-" bocor ke dokumen.
+  const place = rawPlace && !/^[-–—\s.]*$/.test(rawPlace) ? rawPlace : "............";
   const dateText = now.toLocaleDateString("id-ID", {
-    day: "2-digit",
+    day: "numeric",
     month: "long",
     year: "numeric",
   });
   const right = pageWidth - margin;
+  const boxWidth = 62;
+  const boxLeft = right - boxWidth;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
   pdf.text(`${place}, ${dateText}`, right, signY, { align: "right" });
-  pdf.text(user.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan", right, signY + 8, {
+  pdf.text(user.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan", right, signY + 6, {
     align: "right",
   });
+  // Ruang tanda tangan + stempel di atas nama.
   pdf.setFont("helvetica", "bold");
-  pdf.text(user.name, right, signY + 26, { align: "right" });
+  pdf.text(user.name, right, signY + 27, { align: "right", maxWidth: boxWidth });
+  pdf.setDrawColor(120, 130, 122);
+  pdf.setLineWidth(0.3);
+  pdf.line(boxLeft, signY + 29, right, signY + 29);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
-  pdf.text("NIP. ____________________", right, signY + 31, { align: "right" });
+  pdf.text("NIP. ..............................", right, signY + 34, { align: "right" });
 
   const pages = pdf.getNumberOfPages();
   for (let page = 1; page <= pages; page += 1) {

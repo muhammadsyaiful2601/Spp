@@ -2,6 +2,8 @@
 
 Implementasi awal aplikasi pembayaran SPP dan biaya sekolah: React + Vite SPA di `frontend/` dan Laravel REST API + Sanctum di `backend/`.
 
+> **Deploy produksi?** Ikuti [Panduan Deploy ke VPS / Hosting](DEPLOY.md) — mencakup Ubuntu + Nginx + MySQL + HTTPS, verifikasi pasca-deploy, perawatan, dan alternatif shared hosting (cPanel).
+
 ## Menjalankan aplikasi
 
 > **Penting:** port backend dan `VITE_API_URL` harus sama persis. Default
