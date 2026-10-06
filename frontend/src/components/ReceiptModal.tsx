@@ -1,4 +1,5 @@
 import type { ModalKind, Profile, Transaction } from "../types";
+import type { AuthUser } from "../api";
 import { Download, Printer, X } from "lucide-react";
 import { money } from "../lib/format";
 import { MosqueMark } from "./icons";
@@ -9,11 +10,13 @@ export function ReceiptModal({
   profile,
   receiptTransaction,
   setModal,
+  currentUser,
 }: {
   modal: ModalKind;
   profile: Profile;
   receiptTransaction: Transaction;
   setModal: (value: ModalKind) => void;
+  currentUser: AuthUser | null;
 }) {
   async function downloadPDF() {
     const receiptElement = document.querySelector(
@@ -108,7 +111,7 @@ export function ReceiptModal({
           <p className="receipt-note">{profile.note}</p>
           <div className="receipt-signature">
             <span>Petugas penerima</span>
-            <strong>Nadia Amalia</strong>
+            <strong>{currentUser?.name ?? "Petugas"}</strong>
           </div>
         </div>
         <div className="modal-actions no-print">

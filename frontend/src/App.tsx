@@ -1860,6 +1860,7 @@ async function handlePhotoUpload(file: File) {
           setModal={setModal}
           profile={profile}
           receiptTransaction={receiptTransaction}
+          currentUser={currentUser}
         />
       )}
       {idleWarningMs !== null && (
