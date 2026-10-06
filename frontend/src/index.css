@@ -536,4 +536,51 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 @media (max-width: 1120px) { .sidebar { width: 220px; }.main-area { margin-left: 220px; }.topbar { padding-inline: 27px; }.page-content { padding-inline: 27px; }.footer { padding-inline: 27px; }.metrics-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.dashboard-grid { grid-template-columns: minmax(0,1.5fr) minmax(260px,1fr); }.list-toolbar { align-items: flex-start; flex-direction: column; }.toolbar-controls { width: 100%; justify-content: space-between; }.search-box input { width: min(32vw,250px); }.account-layout { grid-template-columns: 1fr; } }
 @media (max-width: 800px) { .sidebar { transform: translateX(-100%); transition: transform .22s ease; width: 258px; box-shadow: 12px 0 35px rgba(20,45,31,.17); }.sidebar.sidebar-open { transform: translateX(0); }.sidebar-close { display: inline-grid !important; margin-left: auto; color: #a9c0b1; }.sidebar-scrim { display: block !important; position: fixed; z-index: 19; inset: 0; width: 100%; border: 0; background: rgba(20,39,29,.37); }.main-area { margin-left: 0; }.mobile-menu { display: inline-grid !important; margin-left: -8px; }.topbar { justify-content: flex-start; gap: 12px; height: 57px; flex-basis: 57px; padding-inline: 20px; }.top-actions { margin-left: auto; gap: 12px; }.page-content { padding: 25px 20px; }.footer { padding-inline: 20px; }.dashboard-grid { grid-template-columns: minmax(0,1.4fr) minmax(225px,1fr); }.payment-layout { grid-template-columns: minmax(230px,.8fr) minmax(0,1.5fr); }.profile-layout { grid-template-columns: minmax(0,1.4fr) minmax(210px,.75fr); } }
 @media (max-width: 620px) { .academic-year, .topbar-date { display: none; }.topbar { padding-inline: 14px; }.page-content { padding: 22px 14px 20px; }.page-heading { align-items: flex-start; flex-direction: column; gap: 13px; margin-bottom: 17px; }.page-heading h1 { font-size: 22px; }.page-heading > .button { align-self: stretch; }.metrics-grid { gap: 8px; }.metric-card { min-height: 118px; padding: 12px; }.metric-card > strong { font-size: 17px; }.metric-top { font-size: 9px; }.metric-icon { width: 28px; height: 28px; }.dashboard-grid, .dashboard-bottom { grid-template-columns: 1fr; }.revenue-panel, .status-panel { min-height: unset; }.bar-chart { height: 132px; gap: 5px; }.dashboard-grid { gap: 9px; }.donut-wrap { justify-content: center; }.transaction-panel .table-wrap { margin-right: 0; }.dashboard-bottom { gap: 9px; }.footer { padding: 12px 14px 15px; font-size: 7px; }.list-toolbar { padding: 14px; }.toolbar-controls { flex-wrap: wrap; }.toolbar-controls > * { flex: 1; }.search-box { min-width: 100%; }.search-box input { flex: 1; width: auto; }.compact-add { flex: 0 0 auto; }.table-wrap table { min-width: 730px; }.table-footer { padding-inline: 13px; }.payment-layout { grid-template-columns: 1fr; }.payment-search-panel { padding: 14px; }.student-results { grid-template-columns: 1fr 1fr; column-gap: 8px; }.student-result { min-width: 0; }.student-result > svg { display: none; }.billing-panel { padding: 15px; }.billing-header { align-items: flex-start; flex-direction: column; }.billing-summary { gap: 14px; flex-wrap: wrap; }.billing-summary > button { margin-left: 0; }.bill-months { grid-template-columns: repeat(3,1fr); }.report-summary { grid-template-columns: 1fr; gap: 8px; }.report-total { grid-template-columns: 1fr auto; align-items: center; }.report-total small { grid-column: 1 / -1; }.report-filter-strip { flex-wrap: wrap; gap: 9px 14px; padding-inline: 13px; }.report-filter-strip button { margin-left: 0; }.settings-content { padding: 16px 13px; }.settings-title { flex-direction: column; }.semester-cards { gap: 7px; }.semester-cards article { padding: 9px; }.semester-head { flex-direction: column; }.semester-date { font-size: 7px; }.semester-months { gap: 2px; }.semester-months span { font-size: 7px; }.tariff-row { grid-template-columns: 1fr 1fr .45fr; padding-inline: 8px; gap: 5px; }.money-input { width: 100%; }.tariff-header > span { font-size: 7px !important; }.active-badge { font-size: 7px; }.settings-actions { align-items: flex-end; }.profile-layout { grid-template-columns: 1fr; }.profile-form { padding: 15px; }.favicon-field { flex-wrap: wrap; }.favicon-tab { margin-left: 0; max-width: 100%; }.favicon-actions { flex-wrap: wrap; }.profile-aside { max-width: 100%; }.mini-receipt { max-width: 380px; }.form-grid { gap: 10px; }.profile-actions { align-items: flex-start; flex-direction: column; }.profile-actions .button { align-self: flex-end; }.month-grid { grid-template-columns: repeat(3,1fr); }.modal { padding: 16px; }.modal-backdrop { padding: 10px; }.toast { right: 12px; bottom: 12px; } }
-@media print { @page { margin: 12mm; } body * { visibility: hidden !important; }.receipt-paper, .receipt-paper * { visibility: visible !important; }.receipt-paper { position: absolute; inset: 0; width: 100%; border: 0; padding: 0; }.receipt-backdrop { position: static; display: block; padding: 0; background: #fff; }.receipt-modal { position: static; width: 100%; max-height: none; overflow: visible; padding: 0; border: 0; box-shadow: none; }.no-print { display: none !important; } }
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .receipt-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: block;
+    width: 100%;
+    padding: 0;
+    background: #fff;
+  }
+
+  .receipt-modal {
+    position: static;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .receipt-paper,
+  .receipt-paper * {
+    visibility: visible !important;
+  }
+
+  .receipt-paper {
+    position: static;
+    width: 100%;
+    border: 0;
+    padding: 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
