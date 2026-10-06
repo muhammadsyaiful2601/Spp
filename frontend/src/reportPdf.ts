@@ -69,12 +69,18 @@ export async function downloadPaymentReport({
   transactions,
   students,
   classFilter,
+  mode = "download",
 }: {
   school: ReportSchool;
   user: ReportUser;
   transactions: ReportTransaction[];
   students: ReportStudent[];
   classFilter: string;
+  /**
+   * `download` menyimpan berkas PDF, `print` membukanya di tab baru lalu
+   * memicu dialog cetak browser secara otomatis.
+   */
+  mode?: "download" | "print";
 }): Promise<void> {
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -233,5 +239,15 @@ export async function downloadPaymentReport({
     });
   }
 
-  pdf.save(`laporan-pembayaran-${now.toISOString().slice(0, 10)}.pdf`);
+  const filename = `laporan-pembayaran-${now.toISOString().slice(0, 10)}.pdf`;
+
+  if (mode === "print") {
+    // autoPrint + tab baru agar dialog cetak browser langsung terbuka.
+    pdf.autoPrint();
+    pdf.output("dataurlnewwindow", { filename });
+
+    return;
+  }
+
+  pdf.save(filename);
 }

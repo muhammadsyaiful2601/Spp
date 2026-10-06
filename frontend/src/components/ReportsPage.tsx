@@ -4,6 +4,7 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  Printer,
   SlidersHorizontal,
 } from "lucide-react";
 import type { Student, Transaction } from "../types";
@@ -26,7 +27,7 @@ export function ReportsPage({
   reportClass: string;
   setReportClass: (value: string) => void;
   onExport: (
-    format: "csv" | "pdf",
+    format: "csv" | "pdf" | "print",
     reportTransactions: Transaction[],
     classFilter: string,
   ) => Promise<void>;
@@ -109,6 +110,18 @@ export function ReportsPage({
                 <FileSpreadsheet size={16} />
               )}
               Ekspor CSV
+            </button>
+            <button
+              className="button button-outline"
+              onClick={() => void onExport("print", filteredTransactions, reportClass)}
+              disabled={busy}
+            >
+              {busy ? (
+                <Loader2 size={16} className="spin" />
+              ) : (
+                <Printer size={16} />
+              )}
+              Print
             </button>
             <button
               className="button button-primary"

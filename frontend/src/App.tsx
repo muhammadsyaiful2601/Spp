@@ -9,6 +9,7 @@ import {
   History,
   LayoutDashboard,
   Plus,
+  Printer,
   ShieldCheck,
   SlidersHorizontal,
   UserCog,
@@ -894,11 +895,11 @@ function App() {
     setToast("Pembayaran berhasil disimpan.");
   }
   async function exportReport(
-    format: "csv" | "pdf",
+    format: "csv" | "pdf" | "print",
     reportTransactions: Transaction[] = transactions,
     classFilter = "Semua kelas",
   ) {
-    if (format === "pdf") {
+    if (format === "pdf" || format === "print") {
       setPdfLoading(true);
       try {
         const { downloadPaymentReport } = await import("./reportPdf");
@@ -908,8 +909,13 @@ function App() {
           transactions: reportTransactions,
           students,
           classFilter,
+          mode: format === "print" ? "print" : "download",
         });
-        setToast("Laporan PDF berhasil diunduh.");
+        setToast(
+          format === "print"
+            ? "Laporan dibuka di tab baru, siap dicetak."
+            : "Laporan PDF berhasil diunduh.",
+        );
       } catch {
         setToast("PDF gagal dibuat. Coba periksa kembali data laporan.");
       } finally {
@@ -1569,12 +1575,20 @@ async function handlePhotoUpload(file: File) {
               </p>
             </div>
             {effectivePage === "dashboard" && (
-              <button
-                className="button button-outline"
-                onClick={() => void exportReport("pdf", transactions)}
-              >
-                <Download size={16} /> Unduh PDF
-              </button>
+              <>
+                <button
+                  className="button button-outline"
+                  onClick={() => void exportReport("print", transactions)}
+                >
+                  <Printer size={16} /> Print
+                </button>
+                <button
+                  className="button button-outline"
+                  onClick={() => void exportReport("pdf", transactions)}
+                >
+                  <Download size={16} /> Unduh PDF
+                </button>
+              </>
             )}
             {effectivePage === "siswa" && (
               <button
