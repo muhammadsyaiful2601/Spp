@@ -1567,6 +1567,32 @@ class SchoolPaymentApiTest extends TestCase
             ->assertOk();
     }
 
+    public function test_reset_email_carries_the_link_to_the_reset_page(): void
+    {
+        $this->seed();
+        Notification::fake();
+
+        $user = User::where('username', 'admin')->firstOrFail();
+
+        $this->postJson('/api/v1/auth/forgot-password', ['identifier' => 'admin'])->assertOk();
+
+        Notification::assertSentTo($user, ResetPasswordNotification::class, function (ResetPasswordNotification $notification) use ($user) {
+            $mail = $notification->toMail($user);
+
+            // The button opens the recovery screen straight on the reset step,
+            // carrying the 64-character code in `kode`.
+            $this->assertStringStartsWith(config('app.frontend_url'), $mail->actionUrl);
+            parse_str((string) parse_url($mail->actionUrl, PHP_URL_QUERY), $query);
+            $this->assertSame(64, strlen($query['kode'] ?? ''));
+
+            // The plaintext code is still printed for mail clients that do not
+            // render links, so the manual-entry fallback never breaks.
+            $this->assertStringContainsString($query['kode'], implode("\n", $mail->introLines));
+
+            return true;
+        });
+    }
+
     public function test_password_reset_signs_every_device_out(): void
     {
         $this->seed();

@@ -7,10 +7,13 @@ import { MosqueMark, StarMotif } from "./icons";
  *
  * Both steps share one screen so a user holding only the email never has to
  * hunt for a second URL. The server answers identically whether or not the
- * account exists, so the "sent" state is shown either way.
+ * account exists, so the "sent" state is shown either way. Arriving from the
+ * emailed `?kode=` link skips the request step and lands here with the code
+ * already filled in.
  */
 export function ForgotPasswordPage({
   error,
+  initialToken = "",
   logo,
   notice,
   school,
@@ -19,6 +22,7 @@ export function ForgotPasswordPage({
   onBackToLogin,
 }: {
   error: string;
+  initialToken?: string;
   logo: string;
   notice: string;
   school: string;
@@ -26,9 +30,9 @@ export function ForgotPasswordPage({
   onReset: (token: string, password: string) => Promise<void>;
   onBackToLogin: () => void;
 }) {
-  const [step, setStep] = useState<"request" | "reset">("request");
+  const [step, setStep] = useState<"request" | "reset">(initialToken ? "reset" : "request");
   const [identifier, setIdentifier] = useState("");
-  const [token, setToken] = useState("");
+  const [token, setToken] = useState(initialToken);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -191,6 +195,7 @@ export function ForgotPasswordPage({
                 />
               </div>
               {problem && <p className="login-error" role="alert">{problem}</p>}
+              {notice && <p className="login-notice" role="status">{notice}</p>}
               <button className="login-submit" type="submit" disabled={busy}>
                 {busy ? <Loader2 size={17} className="spin" /> : <KeyRound size={17} />}
                 Simpan kata sandi baru

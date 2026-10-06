@@ -106,26 +106,44 @@ import ReceiptModal from "./components/ReceiptModal";
 import Toast from "./components/Toast";
 
 
+// Recovery emails link into the app: `?lupa=1` opens the password-recovery
+// request step, and the reset email carries `/?kode=<code>` so its button
+// opens the reset step with the code already filled in. Both flags are
+// consumed exactly once per page load, outside React — StrictMode's
+// double-invoked initializers must never re-read a URL the first call already
+// stripped — and removed immediately: the code must not linger in the address
+// bar, browser history, or referrer headers.
+const recoveryEntry = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const lupa = params.get("lupa") === "1";
+  // Only a well-formed code (Str::random(64)) is honoured from the URL;
+  // anything else is discarded instead of being copied into the form.
+  const raw = params.get("kode");
+  const kode = raw && /^[A-Za-z0-9]{64}$/.test(raw) ? raw : "";
+  if (!lupa && !kode) return { mode: "login" as const, token: "" };
+  params.delete("lupa");
+  params.delete("kode");
+  const query = params.toString();
+  window.history.replaceState(
+    null,
+    "",
+    query ? `${window.location.pathname}?${query}` : window.location.pathname,
+  );
+  return { mode: "forgot" as const, token: kode };
+})();
+
 function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(readSessionUser);
   const [authError, setAuthError] = useState("");
-  // Login and password recovery are two screens of the same signed-out flow.
-  // The security email links to `/?lupa=1` so a reader lands straight on
-  // password recovery; the flag is consumed once and removed from the URL so a
-  // refresh after finishing does not bounce back into the recovery screen.
-  const [authMode, setAuthMode] = useState<"login" | "forgot">(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("lupa") !== "1") return "login";
-    params.delete("lupa");
-    const query = params.toString();
-    window.history.replaceState(
-      null,
-      "",
-      query ? `${window.location.pathname}?${query}` : window.location.pathname,
-    );
-    return "forgot";
-  });
-  const [recoverNotice, setRecoverNotice] = useState("");
+  // Login and password recovery are two screens of the same signed-out flow;
+  // `recoveryEntry` above decides which screen the page opens on.
+  const [entry, setEntry] = useState(recoveryEntry);
+  const [authMode, setAuthMode] = useState<"login" | "forgot">(entry.mode);
+  const [recoverNotice, setRecoverNotice] = useState(
+    entry.token
+      ? "Tautan kode dari email diterima. Silakan buat kata sandi baru."
+      : "",
+  );
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyNotice, setVerifyNotice] = useState("");
   const [verifyError, setVerifyError] = useState("");
@@ -1436,7 +1454,9 @@ async function handlePhotoUpload(file: File) {
           logo={profile.logo}
           error={authError}
           notice={recoverNotice}
+          initialToken={entry.token}
           onBackToLogin={() => {
+            setEntry({ mode: "login", token: "" });
             setAuthMode("login");
             setAuthError("");
             setRecoverNotice("");
@@ -1469,6 +1489,7 @@ async function handlePhotoUpload(file: File) {
                 password_confirmation: password,
               });
               setRecoverNotice("Kata sandi berhasil diubah. Silakan masuk kembali.");
+              setEntry({ mode: "login", token: "" });
               setAuthMode("login");
             } catch (error) {
               setAuthError(

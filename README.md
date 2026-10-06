@@ -432,6 +432,14 @@ Isi `{ "identifier": "admin atau admin@sekolah.sch.id" }`, lalu `{ token, passwo
 
 Kode 64 karakter **disimpan sebagai hash SHA-256** di `password_reset_tokens` — kalau tabelnya bocor, token tidak bisa dipakai. Setelah dipakai, **semua token perangkat ikut dicabut** sehingga sesi lama langsung mati bersama kata sandi lamanya.
 
+Email reset kini memuat **tautan langsung** `FRONTEND_URL/?kode=<64 karakter>`: sekali klik, layar reset terbuka tepat di langkah *buat kata sandi baru* dengan kode sudah terisi otomatis — tidak ada lagi harus menyalin kode 64 karakter manual. Tiga catatan keamanannya:
+
+- Kode **langsung dihapus dari URL** begitu halaman dibuka (`history.replaceState`), sehingga tidak menetap di address bar, history browser, maupun header `Referer`.
+- Parameter `kode` hanya dipercaya kalau persis **64 karakter alphanumeric** (`Str::random(64)`); selain itu dibuang, tidak pernah disalin ke form.
+- Kode mentah **tetap dicetak di email** sebagai cadangan untuk klien mail yang tidak merender tautan, dan kolom input manual tetap tersedia — tautan menambah kenyamanan, tidak menghapus lapisan verifikasi.
+
+Gerbang sebenarnya tetap di server: `POST /auth/reset-password` menuntut kode yang cocok dengan hash + masa berlaku, jadi membuka halaman reset tanpa email hanya menghasilkan form yang akan ditolak server.
+
 ### Verifikasi email
 
 Kode 6 digit dikirim ke email lalu diinput di **halaman Profil sekolah**:
