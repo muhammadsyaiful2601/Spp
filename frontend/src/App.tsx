@@ -90,6 +90,7 @@ import LoadingScreen from "./components/LoadingScreen";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
 import StudentsPage from "./components/StudentsPage";
+import { printStudentReportPage } from "./studentPrint";
 import PaymentPage from "./components/PaymentPage";
 import ReportsPage from "./components/ReportsPage";
 import SettingsPage from "./components/SettingsPage";
@@ -1060,6 +1061,71 @@ function App() {
     URL.revokeObjectURL(link.href);
     setToast("Laporan berhasil diekspor.");
   }
+  async function exportStudentReport(
+    student: Student,
+    mode: "download" | "print",
+    printWindow?: Window | null,
+  ) {
+    if (mode === "print") {
+      if (!printWindow) {
+        setToast("Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.");
+        return;
+      }
+      try {
+        // Fetch logo sebagai data URL agar bisa tampil di window print baru
+        const { fetchSchoolLogoDataUrl } = await import("./api");
+        const logoDataUrl = await fetchSchoolLogoDataUrl();
+        
+        printStudentReportPage({
+          printWindow,
+          school: {
+            ...profile,
+            logo: schoolProfileQuery.data?.logo_path
+              ? publicStorageUrl(schoolProfileQuery.data.logo_path)
+              : profile.logo,
+          },
+          student,
+          transactions: transactions.filter(
+            (transaction) => transaction.student === student.name,
+          ),
+          academicYearLabel: academicYear,
+          printedTime: new Date().toLocaleString("id-ID"),
+          logoDataUrl,
+        });
+        setToast(`Laporan ${student.name} dibuka untuk dicetak.`);
+      } catch {
+        printWindow.close();
+        setToast(`Laporan ${student.name} gagal dibuka untuk dicetak.`);
+      }
+      return;
+    }
+
+    setPdfLoading(true);
+    try {
+      const { downloadStudentReport } = await import("./reportPdf");
+      await downloadStudentReport({
+        school: {
+          ...profile,
+          logo: schoolProfileQuery.data?.logo_path
+            ? publicStorageUrl(schoolProfileQuery.data.logo_path)
+            : profile.logo,
+        },
+        student,
+        transactions,
+        academicYearLabel: academicYear,
+        mode: "download",
+        printWindow,
+      });
+      setToast(
+        `Laporan ${student.name} berhasil diunduh.`,
+      );
+    } catch {
+      printWindow?.close();
+      setToast(`Laporan ${student.name} gagal dibuat. Coba lagi.`);
+    } finally {
+      setPdfLoading(false);
+    }
+  }
   function addStudent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1774,7 +1840,11 @@ async function handlePhotoUpload(file: File) {
               search={search}
               setSearch={setSearch}
               onPay={openPayment}
+              onReport={(student, mode, printWindow) =>
+                void exportStudentReport(student, mode, printWindow)
+              }
               onAdd={() => setModal("student")}
+              reportBusy={pdfLoading}
             />
           )}
           {effectivePage === "pembayaran" && (

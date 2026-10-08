@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { ArrowUpRight, ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
+import {
+  ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Plus,
+  Printer,
+  Search,
+} from "lucide-react";
 import type { Student } from "../types";
 import { money } from "../lib/format";
 import { studentSppAmount } from "../lib/students";
@@ -13,7 +21,9 @@ export function StudentsPage({
   search,
   setSearch,
   onPay,
+  onReport,
   onAdd,
+  reportBusy,
 }: {
   students: Student[];
   sppAmounts: number[];
@@ -21,7 +31,13 @@ export function StudentsPage({
   search: string;
   setSearch: (value: string) => void;
   onPay: (student: Student) => void;
+  onReport: (
+    student: Student,
+    mode: "download" | "print",
+    printWindow?: Window | null,
+  ) => void;
   onAdd: () => void;
+  reportBusy: boolean;
 }) {
   const pageSize = 10;
   const [studentPage, setStudentPage] = useState(1);
@@ -117,12 +133,34 @@ export function StudentsPage({
                   )}
                 </td>
                 <td>
-                  <button
-                    className="button button-table"
-                    onClick={() => onPay(student)}
-                  >
-                    Bayar <ArrowUpRight size={14} />
-                  </button>
+                  <div className="toolbar-controls">
+                    <button
+                      className="button button-table"
+                      onClick={() => onPay(student)}
+                    >
+                      Bayar <ArrowUpRight size={14} />
+                    </button>
+                    <button
+                      className="button button-table"
+                      aria-label={`Unduh laporan ${student.name}`}
+                      title="Unduh laporan PDF"
+                      disabled={reportBusy}
+                      onClick={() => onReport(student, "download")}
+                    >
+                      <Download size={14} />
+                    </button>
+                    <button
+                      className="button button-table"
+                      aria-label={`Cetak laporan ${student.name}`}
+                      title="Cetak laporan"
+                      disabled={reportBusy}
+                      onClick={() =>
+                        onReport(student, "print", window.open("about:blank", "_blank"))
+                      }
+                    >
+                      <Printer size={14} />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
