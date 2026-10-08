@@ -179,6 +179,30 @@ export async function deleteProfilePhoto(): Promise<AccountDetails> {
   return data.data
 }
 
+export type SavedPayment = {
+  transaction_number: string
+  amount: number
+  paid_at: string
+}
+
+export async function paySpp(input: {
+  student_id: number
+  academic_year_id: number
+  months: number[]
+}): Promise<SavedPayment> {
+  const { data } = await api.post<{ data: SavedPayment }>("/admin/pembayaran/spp", input)
+  return data.data
+}
+
+export async function payNonSpp(input: {
+  student_id: number
+  position_rate_id: number
+  amount: number
+}): Promise<SavedPayment> {
+  const { data } = await api.post<{ data: SavedPayment }>("/admin/pembayaran/non-spp", input)
+  return data.data
+}
+
 /** Client-side guard mirroring the server's `image` + 2 MB rule. */
 export function validatePhotoFile(file: File): string | null {
   const allowed = ["image/png", "image/jpeg", "image/webp"]
@@ -252,6 +276,19 @@ export function validationMessage(error: unknown, field: string): string | null 
   return Array.isArray(list) && list.length > 0 ? String(list[0]) : null
 }
 
+export function paymentErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const errors = (error.response?.data as { errors?: Record<string, string[]> } | undefined)?.errors
+    for (const messages of Object.values(errors ?? {})) {
+      if (Array.isArray(messages) && messages.length > 0) return String(messages[0])
+    }
+    const message = (error.response?.data as { message?: string } | undefined)?.message
+    if (message) return message
+    if (!error.response) return "Server tidak dapat dihubungi. Pembayaran belum tersimpan."
+  }
+  return "Pembayaran gagal disimpan. Silakan coba kembali."
+}
+
 /**
  * First validation message from any branding field on the school profile
  * (identity, logo, theme), with role/session/network fallbacks. The identity
@@ -296,6 +333,22 @@ export type SchoolProfile = PublicSchoolProfile & {
 export async function fetchPublicSchoolProfile(): Promise<PublicSchoolProfile> {
   const { data } = await api.get<{ data: PublicSchoolProfile }>('/public/sekolah-profile')
   return data.data
+}
+
+export async function fetchSchoolLogoDataUrl(): Promise<string | null> {
+  const { data } = await api.get<Blob>('/public/sekolah-profile/logo', {
+    responseType: 'blob',
+  })
+  if (data.size === 0) return null
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('Logo sekolah tidak dapat dibaca.'))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('Logo sekolah tidak dapat dibaca.'))
+    reader.readAsDataURL(data)
+  })
 }
 
 /** Full row for the identity editor — includes fields the public endpoint omits. */
@@ -391,6 +444,10 @@ export type PortalStudent = {
   nisn: string
   name: string
   class_name: string
+  spp_arrears: number
+  non_spp_arrears: number
+  spp_unpaid_count: number
+  spp_total_count: number
   /** Month indexes in academic order (0 = Jul ... 11 = Jun). */
   paid_months: number[]
 }
@@ -424,11 +481,32 @@ export type PortalData = {
   summary: {
     total_received: number
     spp_arrears: number
+    spp_paid_count: number
+    spp_unpaid_count: number
+    spp_total_count: number
     non_spp_arrears: number
     students_count: number
     /** Actual rupiah per month, ordered Jul..Jun. */
     monthly_revenue: number[]
   }
+}
+
+export type StudentBills = {
+  spp: {
+    id: number
+    month: number
+    amount: number
+    status: "belum_bayar" | "lunas"
+    paid_at: string | null
+  }[]
+  non_spp: {
+    id: number
+    position_rate_id: number
+    amount_due: number
+    amount_paid: number
+    status: "belum_bayar" | "sebagian" | "lunas"
+    position: string
+  }[]
 }
 
 export type AcademicYear = {
@@ -471,6 +549,15 @@ export async function fetchPortalData(academicYearId?: number | null): Promise<P
   // Omitting the id lets the server fall back to the active year.
   const params = academicYearId ? { academic_year_id: academicYearId } : undefined
   const { data } = await api.get<{ data: PortalData }>('/data/portal', { params })
+  return data.data
+}
+
+export async function fetchStudentBills(
+  studentId: number,
+  academicYearId?: number | null,
+): Promise<StudentBills> {
+  const params = academicYearId ? { academic_year_id: academicYearId } : undefined
+  const { data } = await api.get<{ data: StudentBills }>(`/admin/siswa/${studentId}/tagihan`, { params })
   return data.data
 }
 
@@ -562,8 +649,9 @@ export async function fetchSppPeriods(academicYearId?: number | null): Promise<S
   return data.data
 }
 
-export async function fetchPositionRates(): Promise<PositionRate[]> {
-  const { data } = await api.get<{ data: PositionRate[] }>('/pimpinan/tarif-non-spp')
+export async function fetchPositionRates(academicYearId?: number | null): Promise<PositionRate[]> {
+  const params = academicYearId ? { academic_year_id: academicYearId } : undefined
+  const { data } = await api.get<{ data: PositionRate[] }>('/pimpinan/tarif-non-spp', { params })
   return data.data
 }
 
@@ -598,6 +686,10 @@ export async function createPosition(input: {
     input,
   )
   return data.data
+}
+
+export async function deletePosition(positionId: number): Promise<void> {
+  await api.delete(`/pimpinan/pos-biaya/${positionId}`)
 }
 
 // --- Activity log (audit trail) --------------------------------------------
@@ -704,6 +796,30 @@ export async function fetchActivityLogs(
     },
     categories: data.categories,
   }
+}
+
+/** Download a full SQL backup through the leadership-only endpoint. */
+export async function downloadDatabaseBackup(): Promise<void> {
+  const response = await api.get<Blob>("/pimpinan/backup-database", {
+    responseType: "blob",
+  });
+  const objectUrl = URL.createObjectURL(response.data);
+  const disposition = response.headers["content-disposition"] as string | undefined;
+  const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1]
+    ?? `backup-database-${new Date().toISOString().replace(/[:.]/g, "-")}.sql`;
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+/** Clear Laravel's configured application cache. */
+export async function clearApplicationCache(): Promise<string> {
+  const { data } = await api.post<{ message: string }>("/pimpinan/bersihkan-cache");
+  return data.message;
 }
 
 // --- Theme colour helpers -------------------------------------------------

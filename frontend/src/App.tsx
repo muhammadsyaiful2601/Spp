@@ -4,6 +4,7 @@ import {
   Building2,
   ClipboardList,
   Clock,
+  Database,
   Download,
   HandCoins,
   History,
@@ -29,6 +30,7 @@ import {
   fetchAccount,
   fetchActivityLogs,
   fetchPortalData,
+  fetchStudentBills,
   fetchPublicSchoolProfile,
   fetchTreasurers,
   isHexColor,
@@ -56,6 +58,7 @@ import {
   type Treasurer,
   createPosition,
   deleteProfilePhoto,
+  deletePosition,
   fetchPositionRates,
   fetchSppPeriods,
   forgotPassword,
@@ -65,6 +68,9 @@ import {
   sendVerificationCode,
   uploadProfilePhoto,
   validatePhotoFile,
+  payNonSpp,
+  paySpp,
+  paymentErrorMessage,
   verifyEmailCode,
 } from "./api";
 import "./login.css";
@@ -94,6 +100,7 @@ import EmailVerificationCard from "./components/EmailVerificationCard";
 import type { CostRow, SppRow } from "./components/SettingsPage";
 import BendaharaPage from "./components/BendaharaPage";
 import ActivityLogPage from "./components/ActivityLogPage";
+import MaintenancePage from "./components/MaintenancePage";
 import AccountPage from "./components/AccountPage";
 import type { TreasurerForm } from "./components/BendaharaPage";
 import ProfilePage from "./components/ProfilePage";
@@ -180,6 +187,8 @@ function App() {
   const [logPage, setLogPage] = useState(1);
   const [activeTab, setActiveTab] = useState<"spp" | "biaya">("spp");
   const [payAmount, setPayAmount] = useState(0);
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
   const [receiptTransaction, setReceiptTransaction] =
     useState<Transaction | null>(null);
   const [faviconBusy, setFaviconBusy] = useState(false);
@@ -216,7 +225,7 @@ function App() {
   // them may run, and a query referencing it earlier would hit the temporal
   // dead zone during the first render.
   const accountQuery = useQuery({
-    queryKey: ["account"],
+    queryKey: ["account", currentUser?.id],
     queryFn: fetchAccount,
     enabled: Boolean(currentUser),
   });
@@ -233,21 +242,31 @@ function App() {
     queryKey: ["public-school-profile"],
     queryFn: fetchPublicSchoolProfile,
   });
-  const portalQuery = useQuery({
-    queryKey: ["portal-data", selectedYearId],
-    queryFn: () => fetchPortalData(selectedYearId),
-    // Gated on the verification state, not just on being signed in. An
-    // unverified account receives 403 for this endpoint, so firing it only
-    // produced a guaranteed error that lingered in the cache and made the next
-    // refetch look like a failure.
-    enabled: Boolean(currentUser) && emailVerified,
-  });
   const academicYearsQuery = useQuery({
     queryKey: ["academic-years"],
     queryFn: fetchAcademicYears,
     enabled: Boolean(currentUser),
   });
   const academicYears = academicYearsQuery.data ?? [];
+  const effectiveYearId =
+    academicYears.find((year) => year.id === selectedYearId)?.id ??
+    academicYears.find((year) => year.is_active)?.id ??
+    academicYears[0]?.id ??
+    null;
+  const portalQuery = useQuery({
+    queryKey: ["portal-data", effectiveYearId],
+    queryFn: () => fetchPortalData(effectiveYearId),
+    // Gated on the verification state, not just on being signed in. An
+    // unverified account receives 403 for this endpoint, so firing it only
+    // produced a guaranteed error that lingered in the cache and made the next
+    // refetch look like a failure.
+    enabled: Boolean(currentUser) && emailVerified,
+  });
+  const paymentBillsQuery = useQuery({
+    queryKey: ["student-bills", selected?.dbId, effectiveYearId],
+    queryFn: () => fetchStudentBills(selected!.dbId!, effectiveYearId),
+    enabled: modal === "payment" && selected?.dbId !== undefined,
+  });
   // Treasurer management is leadership-only; an admin hitting this gets a 403,
   // so the query stays disabled for them rather than firing a doomed request.
   const treasurersQuery = useQuery({
@@ -319,14 +338,14 @@ function App() {
 
   // Tariff reads are leadership-only; an admin would only ever get a 403.
   const sppPeriodsQuery = useQuery({
-    queryKey: ["spp-periods", selectedYearId],
-    queryFn: () => fetchSppPeriods(selectedYearId),
+    queryKey: ["spp-periods", effectiveYearId],
+    queryFn: () => fetchSppPeriods(effectiveYearId),
     enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
   });
   const positionRatesQuery = useQuery({
-    queryKey: ["position-rates", selectedYearId],
-    queryFn: fetchPositionRates,
-    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
+    queryKey: ["position-rates", effectiveYearId],
+    queryFn: () => fetchPositionRates(effectiveYearId),
+    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan" && effectiveYearId !== null,
   });
 
   /** Fall back to the first class level until the user picks another. */
@@ -385,13 +404,13 @@ function App() {
   };
 
   const saveSpp = () => {
-    if (selectedYearId === null) {
+    if (effectiveYearId === null) {
       setTariffError("Pilih tahun ajaran terlebih dahulu.");
       return;
     }
     void runTariffAction(async () => {
       await saveSppRates(
-        selectedYearId,
+        effectiveYearId,
         sppRows.map((row) => ({
           class_level_id: row.classLevelId,
           monthly_amount: row.amount,
@@ -402,13 +421,13 @@ function App() {
   };
 
   const saveCosts = () => {
-    if (selectedYearId === null || effectiveCostClassId === null) {
+    if (effectiveYearId === null || effectiveCostClassId === null) {
       setTariffError("Pilih tahun ajaran dan tingkat kelas terlebih dahulu.");
       return;
     }
     void runTariffAction(async () => {
       await savePositionRates({
-        academic_year_id: selectedYearId,
+        academic_year_id: effectiveYearId,
         class_level_id: effectiveCostClassId,
         positions: costRows.map((row) => ({
           payment_position_id: row.paymentPositionId,
@@ -421,12 +440,12 @@ function App() {
   };
 
   const togglePosition = (row: CostRow, next: boolean) => {
-    if (selectedYearId === null || effectiveCostClassId === null) return;
+    if (effectiveYearId === null || effectiveCostClassId === null) return;
     // Flip locally first so the switch responds immediately, then persist.
     setCostToggles((current) => ({ ...current, [row.paymentPositionId]: next }));
     void runTariffAction(async () => {
       await savePositionRates({
-        academic_year_id: selectedYearId,
+        academic_year_id: effectiveYearId,
         class_level_id: effectiveCostClassId,
         positions: [
           { payment_position_id: row.paymentPositionId, amount: row.amount, is_active: next },
@@ -437,10 +456,19 @@ function App() {
   };
 
   const addPosition = (input: { name: string; type: string; amount: number }) => {
-    if (selectedYearId === null) return;
+    if (effectiveYearId === null) return;
     void runTariffAction(async () => {
-      const created = await createPosition({ ...input, academic_year_id: selectedYearId });
+      const created = await createPosition({ ...input, academic_year_id: effectiveYearId });
       return `Pos biaya ${created.name} berhasil ditambahkan.`;
+    });
+  };
+  const removePosition = (row: CostRow) => {
+    if (!window.confirm(`Hapus pos biaya "${row.name}"? Tindakan ini tidak dapat dibatalkan.`)) {
+      return;
+    }
+    void runTariffAction(async () => {
+      await deletePosition(row.paymentPositionId);
+      return `Pos biaya ${row.name} berhasil dihapus.`;
     });
   };
   const [page, setPage] = useState<Page>("dashboard");
@@ -455,7 +483,11 @@ function App() {
 
   // Derived, not synchronised: an unverified account always renders the profile
   // screen. `effectivePage` is what the renderer uses, so no effect is needed.
-  const effectivePage: Page = emailVerified ? page : "profil";
+  const effectivePage: Page = !emailVerified
+    ? "profil"
+    : currentUser?.role !== "pimpinan" && page === "pemeliharaan"
+      ? "dashboard"
+      : page;
   // Non-SPP positions are read from `position_rates`; the constant is only a
   // placeholder for the moment before the request resolves.
   // Class level names drive the SPP rate lookup, so they come from the database.
@@ -485,13 +517,23 @@ function App() {
   const positionRates = useMemo(() => {
     const rates = portalQuery.data?.position_rates ?? [];
     const levels = portalQuery.data?.class_levels ?? [];
-    if (rates.length === 0) return [];
-    const firstLevel = levels[0]?.id;
-    const seen = new Map<string, { name: string; type: string; amount: number }>();
+    if (rates.length === 0 || (selected?.dbId && !paymentBillsQuery.data)) return [];
+    const selectedLevel = levels.find((level) => level.name === selected?.className);
+    const classLevelId = selectedLevel?.id ?? levels[0]?.id;
+    const seen = new Map<string, { rateId: number; name: string; type: string; amount: number }>();
     for (const rate of rates) {
-      if (firstLevel && rate.class_level_id !== firstLevel) continue;
+      if (classLevelId && rate.class_level_id !== classLevelId) continue;
       if (seen.has(rate.position)) continue;
+      const bill = paymentBillsQuery.data?.non_spp.find(
+        (item) => item.position_rate_id === rate.id,
+      );
+      const remaining = Math.max(
+        0,
+        Number(bill?.amount_due ?? rate.amount) - Number(bill?.amount_paid ?? 0),
+      );
+      if (remaining === 0) continue;
       seen.set(rate.position, {
+        rateId: rate.id,
         name: rate.position,
         type:
           rate.type === "tahunan"
@@ -499,11 +541,11 @@ function App() {
             : rate.type === "cicilan"
               ? "Cicilan"
               : "Sekali bayar",
-        amount: rate.amount,
+        amount: remaining,
       });
     }
     return [...seen.values()];
-  }, [portalQuery.data]);
+  }, [portalQuery.data, paymentBillsQuery.data, selected?.className, selected?.dbId]);
   const notices = useMemo(
     () => buildNotices(students, transactions, sppAmounts, classLevels),
     [students, transactions, sppAmounts, classLevels],
@@ -536,6 +578,10 @@ function App() {
           className: student.class_name,
           nisn: student.nisn,
           paid: student.paid_months,
+          sppArrears: student.spp_arrears,
+          nonSppArrears: student.non_spp_arrears,
+          sppUnpaidCount: student.spp_unpaid_count,
+          sppTotalCount: student.spp_total_count,
         })),
       );
       setTransactions(
@@ -769,6 +815,7 @@ function App() {
     profil: "Profil sekolah",
     bendahara: "Kelola bendahara",
     log: "Log aktivitas",
+    pemeliharaan: "Backup & cache",
     akun: "Akun saya",
   };
   const navGroups = emailVerified
@@ -799,6 +846,7 @@ function App() {
                   { id: "profil" as Page, text: "Profil sekolah", icon: Building2 },
                   { id: "bendahara" as Page, text: "Kelola bendahara", icon: Wallet },
                   { id: "log" as Page, text: "Log aktivitas", icon: History },
+                  { id: "pemeliharaan" as Page, text: "Backup & cache", icon: Database },
                 ],
               },
             ]
@@ -822,96 +870,127 @@ function App() {
   const totalPaid = portalQuery.data
     ? portalQuery.data.summary.total_received
     : transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
-  const outstanding = students.reduce(
-    (sum, student) =>
-      sum + Math.max(0, 12 - student.paid.length) * studentSppAmount(student, sppAmounts, classLevels),
-    0,
-  );
+  const outstanding = portalQuery.data
+    ? portalQuery.data.summary.spp_arrears
+    : students.reduce(
+        (sum, student) =>
+          sum + Math.max(0, 12 - student.paid.length) * studentSppAmount(student, sppAmounts, classLevels),
+        0,
+      );
   const monthlyRevenue = portalQuery.data?.summary.monthly_revenue ?? [];
   const selectedSppAmount = selected
     ? studentSppAmount(selected, sppAmounts, classLevels)
     : 0;
   const selectedCost = activeCost;
-  const previousCostPayments = selected
-    ? transactions
-        .filter(
-          (item) => item.student === selected.name && item.detail === payCost,
-        )
-        .reduce((sum, item) => sum + item.amount, 0)
-    : 0;
+  const selectedCostBill = paymentBillsQuery.data?.non_spp.find(
+    (bill) => bill.position_rate_id === selectedCost?.rateId,
+  );
   const remainingCost = Math.max(
     0,
-    (selectedCost?.amount ?? 0) - previousCostPayments,
+    Number(selectedCostBill?.amount_due ?? selectedCost?.amount ?? 0) -
+      Number(selectedCostBill?.amount_paid ?? 0),
   );
+  const paidMonths = paymentBillsQuery.data?.spp
+    .filter((bill) => bill.status === "lunas")
+    .map((bill) => bill.month >= 7 ? bill.month - 7 : bill.month + 5)
+    ?? selected?.paid
+    ?? [];
+  const sppAmountsByMonth = monthNames.map((_, index) => {
+    const calendarMonth = index < 6 ? index + 7 : index - 5;
+    const bill = paymentBillsQuery.data?.spp.find((item) => item.month === calendarMonth);
+    return bill ? Number(bill.amount) : selectedSppAmount;
+  });
 
   function openPayment(student: Student, kind: "spp" | "non-spp" = "spp") {
     setSelected(student);
     setPayKind(kind);
     setPayMonths([]);
-    setPayAmount(positionRates[0]?.amount ?? 0);
+    setPaymentError("");
+    const studentRates = (portalQuery.data?.position_rates ?? []).filter((rate) => {
+      const level = portalQuery.data?.class_levels.find(
+        (item) => item.name === student.className,
+      );
+      return level ? rate.class_level_id === level.id : false;
+    });
+    const initialRate = studentRates[0];
+    setPayCost(initialRate?.position ?? "");
+    setPayAmount(initialRate?.amount ?? 0);
     setModal("payment");
   }
-  function savePayment() {
-    if (!selected) return;
-    const student = students.find((item) => item.id === selected.id);
-    if (!student) return;
-    const selectedCost = activeCost;
-    const previousCostPayments = transactions
-      .filter(
-        (item) => item.student === student.name && item.detail === payCost,
-      )
-      .reduce((sum, item) => sum + item.amount, 0);
-    const remainingCost = Math.max(
-      0,
-      (selectedCost?.amount ?? 0) - previousCostPayments,
-    );
-    const amount =
-      payKind === "spp"
-        ? payMonths.length * studentSppAmount(student, sppAmounts, classLevels)
-        : payAmount;
-    if (amount <= 0 || (payKind === "spp" && payMonths.length === 0)) {
-      setToast("Pilih tagihan yang akan dibayar terlebih dahulu.");
+  async function savePayment() {
+    if (!selected || paymentBusy) return;
+    if (paymentBillsQuery.isLoading) {
+      setPaymentError("Tunggu hingga tagihan siswa selesai dimuat.");
       return;
     }
-    if (
-      payKind === "non-spp" &&
-      (amount > remainingCost ||
-        (selectedCost?.type !== "Cicilan" && amount !== remainingCost))
-    ) {
-      setToast("Jumlah pembayaran tidak sesuai dengan sisa tagihan.");
+    if (paymentBillsQuery.isError) {
+      setPaymentError("Tagihan gagal dimuat. Muat ulang halaman pembayaran sebelum menyimpan.");
       return;
     }
-    const id = `${payKind === "spp" ? "SPP" : "NSP"}-${new Date().toISOString().slice(2, 10).replaceAll("-", "")}-${String(transactions.length + 83).padStart(4, "0")}`;
-    const detail =
-      payKind === "spp"
+    if (!selected.dbId) {
+      setPaymentError("Data siswa tidak terhubung ke server, pembayaran tidak dapat disimpan.");
+      return;
+    }
+    const yearId = effectiveYearId ?? portalQuery.data?.academic_year?.id;
+    if (!yearId) {
+      setPaymentError("Tahun ajaran belum tersedia. Pembayaran tidak dapat disimpan.");
+      return;
+    }
+    if (payKind === "spp" && (payMonths.length === 0 || payMonths.some((month) => paidMonths.includes(month)))) {
+      setPaymentError("Pilih bulan SPP yang belum lunas.");
+      return;
+    }
+    if (payKind === "non-spp" && !selectedCost?.rateId) {
+      setPaymentError("Pilih tarif biaya lain untuk tahun ajaran ini.");
+      return;
+    }
+    const amount = payKind === "spp"
+      ? payMonths.reduce((total, month) => total + sppAmountsByMonth[month], 0)
+      : Math.min(payAmount, remainingCost);
+    if (amount <= 0 || (payKind === "non-spp" && (
+      amount > remainingCost ||
+      (selectedCost?.type !== "Cicilan" && amount !== remainingCost)
+    ))) {
+      setPaymentError("Jumlah pembayaran tidak sesuai dengan sisa tagihan.");
+      return;
+    }
+
+    setPaymentBusy(true);
+    setPaymentError("");
+    try {
+      const saved = payKind === "spp"
+        ? await paySpp({
+            student_id: selected.dbId,
+            academic_year_id: yearId,
+            months: payMonths.map((month) => month < 6 ? month + 7 : month - 5),
+          })
+        : await payNonSpp({
+            student_id: selected.dbId,
+            position_rate_id: selectedCost!.rateId,
+            amount,
+          });
+      const detail = payKind === "spp"
         ? `SPP · ${payMonths.map((month) => monthNames[month]).join(", ")}`
-        : activeCost?.name ?? "";
-    const transaction = {
-      id,
-      student: student.name,
-      detail,
-      date: "Hari ini, sekarang",
-      amount,
-      status: "Lunas",
-    };
-    setTransactions((items) => [transaction, ...items]);
-    if (payKind === "spp") {
-      setStudents((items) =>
-        items.map((item) =>
-          item.id === student.id
-            ? {
-                ...item,
-                paid: [...new Set([...item.paid, ...payMonths])].sort(
-                  (a, b) => a - b,
-                ),
-              }
-            : item,
-        ),
-      );
+        : selectedCost?.name ?? "Biaya lain";
+      const transaction: Transaction = {
+        id: saved.transaction_number,
+        student: selected.name,
+        detail,
+        date: new Date(saved.paid_at).toLocaleString("id-ID"),
+        amount: Number(saved.amount),
+        status: "Lunas",
+      };
+      setTransactions((items) => [transaction, ...items]);
+      setReceiptTransaction(transaction);
+      setModal("receipt");
+      setToast("Pembayaran berhasil disimpan.");
+      void queryClient.invalidateQueries({ queryKey: ["portal-data"] });
+      void queryClient.invalidateQueries({ queryKey: ["student-bills", selected.dbId] });
+    } catch (error) {
+      setPaymentError(paymentErrorMessage(error));
+    } finally {
+      setPaymentBusy(false);
     }
-    setReceiptTransaction(transaction);
-    setModal("receipt");
-    setToast("Pembayaran berhasil disimpan.");
   }
   async function exportReport(
     format: "csv" | "pdf" | "print",
@@ -923,11 +1002,24 @@ function App() {
       try {
         const { downloadPaymentReport } = await import("./reportPdf");
         await downloadPaymentReport({
-          school: profile,
+          school: {
+            ...profile,
+            logo: schoolProfileQuery.data?.logo_path
+              ? publicStorageUrl(schoolProfileQuery.data.logo_path)
+              : profile.logo,
+          },
           user: currentUser ?? { name: "Petugas Keuangan", role: "admin" },
           transactions: reportTransactions,
-          students,
+          students: students.map((student) => ({
+            name: student.name,
+            className: student.className,
+            paid: student.paid,
+            sppArrears: student.sppArrears ?? 0,
+            sppUnpaidCount: student.sppUnpaidCount ?? 0,
+            sppTotalCount: student.sppTotalCount ?? 0,
+          })),
           classFilter,
+          academicYearLabel: academicYear,
           mode: format === "print" ? "print" : "download",
         });
         setToast(
@@ -1212,6 +1304,7 @@ function App() {
     }
     clearSessionActivity();
     clearSession();
+    queryClient.clear();
     setCurrentUser(null);
     setPage("dashboard");
     setActiveTab("spp");
@@ -1221,6 +1314,7 @@ function App() {
   function handleSessionExpired() {
     clearSessionActivity();
     clearSession();
+    queryClient.clear();
     setCurrentUser(null);
     setPage("dashboard");
     setToast("Sesi berakhir karena tidak ada aktivitas. Silakan masuk kembali.");
@@ -1521,6 +1615,9 @@ async function handlePhotoUpload(file: File) {
           setAuthLoading(true);
           try {
             const session = await loginApi(username, password);
+            // A different account must never inherit profile or portal data
+            // cached under the previous authenticated session.
+            queryClient.clear();
             // Opening the idle window here means the countdown starts at login,
             // not at whatever timestamp a previous visit left behind.
             startSession();
@@ -1572,7 +1669,7 @@ async function handlePhotoUpload(file: File) {
         onSelectYear={selectYear}
         onCreateYear={createYear}
         onActivate={activateYear}
-        selectedYearId={selectedYearId}
+        selectedYearId={effectiveYearId}
         portalQuerying={yearBusy || portalQuery.isFetching}
         today={today}
         notices={notices}
@@ -1610,6 +1707,8 @@ async function handlePhotoUpload(file: File) {
                             ? "Kelola akun bendahara yang mencatat pembayaran."
                             : page === "log"
                               ? "Jejak aktivitas pimpinan dan bendahara di portal."
+                              : page === "pemeliharaan"
+                                ? "Unduh backup database atau bersihkan cache aplikasi."
                               : "Pantau realisasi penerimaan dan tunggakan sekolah."}
               </p>
             </div>
@@ -1645,6 +1744,9 @@ async function handlePhotoUpload(file: File) {
               transactions={transactions}
               totalPaid={totalPaid}
               outstanding={outstanding}
+              sppPaidCount={portalQuery.data?.summary.spp_paid_count ?? 0}
+              sppUnpaidCount={portalQuery.data?.summary.spp_unpaid_count ?? 0}
+              sppTotalCount={portalQuery.data?.summary.spp_total_count ?? 0}
               monthlyRevenue={monthlyRevenue}
               now={now}
               academicYearLabel={academicYear}
@@ -1655,7 +1757,7 @@ async function handlePhotoUpload(file: File) {
               onActivateYear={activateYear}
               onSelectYear={selectYear}
               onCreateYear={createYear}
-              selectedYearId={selectedYearId}
+              selectedYearId={effectiveYearId}
               portalQuerying={yearBusy || portalQuery.isFetching}
               onGo={setPage}
               onReceipt={(item) => {
@@ -1683,6 +1785,9 @@ async function handlePhotoUpload(file: File) {
               search={search}
               setSearch={setSearch}
               onPay={openPayment}
+              academicYears={academicYears}
+              selectedYearId={effectiveYearId}
+              onSelectYear={selectYear}
             />
           )}
           {effectivePage === "laporan" && (
@@ -1719,6 +1824,7 @@ async function handlePhotoUpload(file: File) {
               onTogglePosition={togglePosition}
               onSaveCosts={saveCosts}
               onAddPosition={addPosition}
+              onDeletePosition={removePosition}
             />
           )}
           {effectivePage === "bendahara" && (
@@ -1766,6 +1872,7 @@ async function handlePhotoUpload(file: File) {
               to={logTo}
             />
           )}
+          {effectivePage === "pemeliharaan" && <MaintenancePage />}
           {effectivePage === "profil" && (
             <ProfilePage
               verification={
@@ -1798,6 +1905,7 @@ async function handlePhotoUpload(file: File) {
           )}
           {effectivePage === "akun" && (
             <AccountPage
+              key={currentUser.id}
               account={accountQuery.data}
               fallback={currentUser}
               loading={accountQuery.isLoading}
@@ -1834,15 +1942,21 @@ async function handlePhotoUpload(file: File) {
           payKind={payKind}
           setPayKind={setPayKind}
           payMonths={payMonths}
+          paidMonths={paidMonths}
           setPayMonths={setPayMonths}
           payAmount={payAmount}
           setPayAmount={setPayAmount}
           setPayCost={setPayCost}
           positionRates={positionRates}
+          sppAmountsByMonth={sppAmountsByMonth}
           activeCost={activeCost}
           selectedCost={selectedCost}
           selectedSppAmount={selectedSppAmount}
           remainingCost={remainingCost}
+          paymentBillsLoading={paymentBillsQuery.isLoading}
+          paymentBillsError={paymentBillsQuery.isError}
+          paymentBusy={paymentBusy}
+          paymentError={paymentError}
           savePayment={savePayment}
         />
       )}

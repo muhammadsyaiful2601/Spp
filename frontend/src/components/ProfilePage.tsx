@@ -252,7 +252,7 @@ export function ProfilePage({
         )}
         <div className="form-grid">
           <div className="form-field full">
-            <label htmlFor="profile-school">Nama sekolah</label>
+            <label htmlFor="profile-school">Nama Sistem</label>
             <input
               id="profile-school"
               value={profile.school}

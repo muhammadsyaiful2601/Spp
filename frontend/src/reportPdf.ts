@@ -1,9 +1,14 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { fetchSchoolLogoDataUrl } from "./api";
 
 type ReportStudent = {
   name: string;
   className: string;
+  paid: number[];
+  sppArrears: number;
+  sppUnpaidCount: number;
+  sppTotalCount: number;
 };
 
 type ReportTransaction = {
@@ -63,12 +68,70 @@ function rupiah(amount: number): string {
   }).format(amount);
 }
 
+function titleCaseWords(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toLocaleUpperCase("id-ID") + word.slice(1))
+    .join(" ");
+}
+
+function compactAddress(address: string): string {
+  return address
+    .split(/[\n\r]+/)
+    .flatMap((line) => line.split(","))
+    .map((part) => titleCaseWords(part.trim()))
+    .filter(Boolean)
+    .join(", ");
+}
+
+function placeFromAddress(address: string): string {
+  const parts = compactAddress(address)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const last = parts.at(-1) ?? "";
+  return last && !/^[-–—\s.]*$/.test(last) ? last : "............";
+}
+
+function writeCenteredBlock(
+  pdf: jsPDF,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+): number {
+  if (!text) return y;
+  const lines = pdf.splitTextToSize(text, maxWidth);
+  pdf.text(lines, x, y, { align: "center" });
+  return y + lines.length * lineHeight;
+}
+
+function writeRightLines(
+  pdf: jsPDF,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+): number {
+  const lines = pdf.splitTextToSize(text, maxWidth);
+  lines.forEach((line: string, index: number) => {
+    pdf.text(line, x, y + index * lineHeight, { align: "right" });
+  });
+  return y + lines.length * lineHeight;
+}
+
 export async function downloadPaymentReport({
   school,
   user,
   transactions,
   students,
   classFilter,
+  academicYearLabel,
   mode = "download",
 }: {
   school: ReportSchool;
@@ -76,6 +139,7 @@ export async function downloadPaymentReport({
   transactions: ReportTransaction[];
   students: ReportStudent[];
   classFilter: string;
+  academicYearLabel: string;
   /**
    * `download` menyimpan berkas PDF, `print` membukanya di tab baru lalu
    * memicu dialog cetak browser secara otomatis.
@@ -87,69 +151,105 @@ export async function downloadPaymentReport({
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 14;
   const now = new Date();
-  const logo = await convertLogoToPng(school.logo);
-  const initials = school.school
+  const logoSource = await fetchSchoolLogoDataUrl();
+  const logo = await convertLogoToPng(logoSource ?? "");
+  const institutionName = (school.foundation.trim() || school.school.trim()).toLocaleUpperCase(
+    "id-ID",
+  );
+  const initials = institutionName
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((word) => word[0].toUpperCase())
+    .map((word) => word[0])
     .join("");
 
-  if (logo) {
-    pdf.addImage(logo, "PNG", margin, 12, 23, 23, undefined, "FAST");
-  } else {
-    pdf.setFillColor(36, 99, 78);
-    pdf.roundedRect(margin, 12, 23, 23, 2, 2, "F");
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(12);
-    pdf.text(initials || "SD", margin + 11.5, 26, { align: "center" });
+  const pageCenter = pageWidth / 2;
+  const logoSize = 26;
+  const logoX = margin;
+  const kopTop = 10;
+  const kopMaxWidth = pageWidth - (margin + logoSize + 6) * 2;
+  const addressText = compactAddress(school.address);
+  const contactText = [
+    school.phone.trim() && `Telp. ${school.phone.trim()}`,
+    school.email.trim() && `Email: ${school.email.trim()}`,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+
+  let cursorY = kopTop + 7;
+  pdf.setTextColor(20, 32, 26);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(15);
+  cursorY = writeCenteredBlock(pdf, institutionName, pageCenter, cursorY, kopMaxWidth, 6.4);
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.5);
+  if (addressText) {
+    cursorY += 0.6;
+    cursorY = writeCenteredBlock(
+      pdf,
+      `Alamat: ${addressText}`,
+      pageCenter,
+      cursorY,
+      kopMaxWidth,
+      4.2,
+    );
+  }
+  if (contactText) {
+    cursorY = writeCenteredBlock(pdf, contactText, pageCenter, cursorY, kopMaxWidth, 4);
   }
 
-  const headerCenter = pageWidth / 2 + 7;
-  pdf.setTextColor(35, 48, 40);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(10);
-  pdf.text(school.foundation.toLocaleUpperCase("id-ID"), headerCenter, 15, {
-    align: "center",
-    maxWidth: pageWidth - 63,
-  });
-  pdf.setFontSize(13);
-  pdf.text(school.school.toLocaleUpperCase("id-ID"), headerCenter, 22, {
-    align: "center",
-    maxWidth: pageWidth - 63,
-  });
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(8);
-  pdf.text(school.address, headerCenter, 28, {
-    align: "center",
-    maxWidth: pageWidth - 63,
-  });
-  pdf.text([school.phone, school.email].filter(Boolean).join(" · "), headerCenter, 33, {
-    align: "center",
-    maxWidth: pageWidth - 63,
-  });
-  pdf.setDrawColor(43, 56, 48);
-  pdf.setLineWidth(0.65);
-  pdf.line(margin, 39, pageWidth - margin, 39);
-  pdf.setLineWidth(0.2);
-  pdf.line(margin, 41, pageWidth - margin, 41);
+  const kopBottom = cursorY + 1.2;
+  const logoY = kopTop + Math.max(0, (kopBottom - kopTop - logoSize) / 2);
+  if (logo) {
+    pdf.addImage(logo, "PNG", logoX, logoY, logoSize, logoSize, undefined, "FAST");
+  } else {
+    pdf.setFillColor(36, 99, 78);
+    pdf.roundedRect(logoX, logoY, logoSize, logoSize, 2, 2, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.text(initials || "SD", logoX + logoSize / 2, logoY + logoSize / 2 + 3.5, {
+      align: "center",
+    });
+  }
 
-  pdf.setTextColor(34, 47, 39);
+  const lineY = Math.max(logoY + logoSize, kopBottom) + 3;
+  pdf.setDrawColor(28, 42, 34);
+  pdf.setLineWidth(0.85);
+  pdf.line(margin, lineY, pageWidth - margin, lineY);
+  pdf.setLineWidth(0.28);
+  pdf.line(margin, lineY + 1.6, pageWidth - margin, lineY + 1.6);
+
+  pdf.setTextColor(20, 32, 26);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(13);
-  pdf.text("LAPORAN PEMBAYARAN SEKOLAH", pageWidth / 2, 51, {
+  pdf.text("LAPORAN PEMBAYARAN SEKOLAH", pageCenter, lineY + 9, {
     align: "center",
   });
   pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(9);
-  pdf.text("Tahun ajaran 2026 / 2027", pageWidth / 2, 57, { align: "center" });
-  pdf.setFontSize(8);
-  pdf.text(`Tingkat kelas: ${classFilter}`, margin, 68);
-  pdf.text(`Dicetak pada: ${printedAt(now)}`, margin, 73);
-  pdf.text(`Jumlah transaksi: ${transactions.length}`, pageWidth - margin, 73, {
-    align: "right",
+  pdf.setFontSize(9.5);
+  pdf.text(`Tahun Ajaran ${academicYearLabel}`, pageCenter, lineY + 14.5, {
+    align: "center",
   });
+
+  pdf.setFontSize(8);
+  pdf.setTextColor(45, 56, 48);
+  pdf.text(`Tingkat kelas: ${classFilter}`, margin, lineY + 22.5);
+  pdf.text(
+    `Dicetak: ${printedAt(now)}  ·  ${transactions.length} transaksi`,
+    pageWidth - margin,
+    lineY + 22.5,
+    { align: "right" },
+  );
+
+  const filteredStudents = students.filter(
+    (student) => classFilter === "Semua kelas" || student.className === classFilter,
+  );
+  const totalPaid = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const totalArrears = filteredStudents.reduce((sum, student) => sum + student.sppArrears, 0);
+  const payingCount = filteredStudents.filter((student) => student.paid.length > 0).length;
+  const arrearsCount = filteredStudents.filter((student) => student.sppUnpaidCount > 0).length;
 
   const studentByName = new Map(students.map((student) => [student.name, student]));
   const body = transactions.map((transaction, index) => {
@@ -168,9 +268,20 @@ export async function downloadPaymentReport({
   });
 
   autoTable(pdf, {
-    startY: 78,
-    head: [["No.", "Kode transaksi", "Siswa", "Kelas", "Rincian pembayaran", "Jumlah", "Status", "Tanggal"]],
+    startY: lineY + 27,
+    head: [["No.", "Kode transaksi", "Siswa", "Kelas", "Rincian pembayaran", "Jumlah", "Status transaksi", "Tanggal"]],
     body: body.length ? body : [["-", "-", "Tidak ada transaksi", "-", "-", "-", "-", "-"]],
+    foot: [
+      [
+        {
+          content: `Total yang membayar (${transactions.length} transaksi)`,
+          colSpan: 5,
+          styles: { halign: "right", fontStyle: "bold" },
+        },
+        { content: rupiah(totalPaid), styles: { halign: "right", fontStyle: "bold" } },
+        { content: "", colSpan: 2 },
+      ],
+    ],
     margin: { left: margin, right: margin, bottom: 34 },
     theme: "grid",
     styles: {
@@ -189,6 +300,12 @@ export async function downloadPaymentReport({
       fontStyle: "bold",
       halign: "center",
     },
+    footStyles: {
+      fillColor: [241, 245, 241],
+      textColor: [35, 48, 40],
+      fontStyle: "bold",
+    },
+    showFoot: "lastPage",
     columnStyles: {
       0: { cellWidth: 10, halign: "center" },
       1: { cellWidth: 24 },
@@ -201,46 +318,159 @@ export async function downloadPaymentReport({
     },
   });
 
+  pdf.addPage();
+  pdf.setTextColor(34, 47, 39);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(12);
+  pdf.text("STATUS TAGIHAN SPP SISWA", margin, 20);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  pdf.text(`Tahun ajaran ${academicYearLabel} · Tingkat kelas: ${classFilter}`, margin, 26);
+  const billStatusRows = filteredStudents.map((student, index) => {
+      const paidCount = student.paid.length;
+      const unpaidCount = student.sppUnpaidCount;
+      const status = student.sppTotalCount === 0
+        ? "Tarif belum diatur"
+        : unpaidCount === 0
+          ? "Lunas"
+          : paidCount === 0
+            ? "Menunggak"
+            : "Sebagian";
+
+      return [
+        String(index + 1),
+        student.name,
+        student.className,
+        `${paidCount} / ${student.sppTotalCount}`,
+        String(unpaidCount),
+        rupiah(student.sppArrears),
+        status,
+      ];
+    });
+  autoTable(pdf, {
+    startY: 31,
+    head: [["No.", "Siswa", "Kelas", "Bulan lunas", "Tunggakan", "Nominal tunggakan", "Status"]],
+    body: billStatusRows.length
+      ? billStatusRows
+      : [["-", "Tidak ada data siswa", "-", "-", "-", "-", "-"]],
+    foot: [
+      [
+        {
+          content: `Total yang menunggak (${arrearsCount} siswa)`,
+          colSpan: 5,
+          styles: { halign: "right", fontStyle: "bold" },
+        },
+        { content: rupiah(totalArrears), styles: { halign: "right", fontStyle: "bold" } },
+        { content: "" },
+      ],
+    ],
+    margin: { left: margin, right: margin, bottom: 34 },
+    theme: "grid",
+    styles: {
+      font: "helvetica",
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: [43, 53, 46],
+      lineColor: [93, 104, 96],
+      lineWidth: 0.18,
+      overflow: "linebreak",
+      valign: "middle",
+    },
+    headStyles: {
+      fillColor: [222, 230, 239],
+      textColor: [35, 48, 40],
+      fontStyle: "bold",
+      halign: "center",
+    },
+    footStyles: {
+      fillColor: [241, 245, 241],
+      textColor: [35, 48, 40],
+      fontStyle: "bold",
+    },
+    showFoot: "lastPage",
+    columnStyles: {
+      0: { cellWidth: 10, halign: "center" },
+      1: { cellWidth: 44 },
+      2: { cellWidth: 22 },
+      3: { cellWidth: 23, halign: "center" },
+      4: { cellWidth: 20, halign: "center" },
+      5: { cellWidth: 34, halign: "right" },
+      6: { cellWidth: 29, halign: "center" },
+    },
+  });
+
   const tableEnd = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
     .lastAutoTable?.finalY ?? 80;
-  let signY = tableEnd + 13;
-  if (signY + 36 > pageHeight - 8) {
+  let recapY = tableEnd + 10;
+  if (recapY + 28 > pageHeight - 48) {
+    pdf.addPage();
+    recapY = 20;
+  }
+
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(9);
+  pdf.setTextColor(34, 47, 39);
+  pdf.text("RINGKASAN TOTAL", margin, recapY);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  pdf.text(
+    `Total yang membayar: ${rupiah(totalPaid)} · ${transactions.length} transaksi · ${payingCount} siswa pernah membayar`,
+    margin,
+    recapY + 6,
+  );
+  pdf.text(
+    `Total yang menunggak: ${rupiah(totalArrears)} · ${arrearsCount} siswa masih memiliki tunggakan SPP`,
+    margin,
+    recapY + 11,
+  );
+
+  let signY = recapY + 24;
+  if (signY + 44 > pageHeight - 8) {
     pdf.addPage();
     signY = 20;
   }
 
-  // Blok tanda tangan resmi: tempat + tanggal Indonesia, nama jelas, NIP.
-  const rawPlace = school.address
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .slice(-2)
-    .join(", ");
-  // Alamat bebas — jangan biarkan placeholder seperti "-" bocor ke dokumen.
-  const place = rawPlace && !/^[-–—\s.]*$/.test(rawPlace) ? rawPlace : "............";
+  const roleLabel = user.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan";
+  const signerName = user.name.trim();
+  const showSignerName =
+    Boolean(signerName) &&
+    signerName.toLocaleLowerCase("id-ID") !== roleLabel.toLocaleLowerCase("id-ID");
   const dateText = now.toLocaleDateString("id-ID", {
     day: "numeric",
     month: "long",
     year: "numeric",
   });
   const right = pageWidth - margin;
-  const boxWidth = 62;
+  const boxWidth = 78;
   const boxLeft = right - boxWidth;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
-  pdf.text(`${place}, ${dateText}`, right, signY, { align: "right" });
-  pdf.text(user.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan", right, signY + 6, {
-    align: "right",
-  });
-  // Ruang tanda tangan + stempel di atas nama.
-  pdf.setFont("helvetica", "bold");
-  pdf.text(user.name, right, signY + 27, { align: "right", maxWidth: boxWidth });
+  let blockY = writeRightLines(
+    pdf,
+    `${placeFromAddress(school.address)}, ${dateText}`,
+    right,
+    signY,
+    boxWidth,
+    4.4,
+  );
+  blockY = writeRightLines(pdf, roleLabel, right, blockY + 1, boxWidth, 4.4);
+
+  const lineAt = blockY + 22;
   pdf.setDrawColor(120, 130, 122);
   pdf.setLineWidth(0.3);
-  pdf.line(boxLeft, signY + 29, right, signY + 29);
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(8);
-  pdf.text("NIP. ..............................", right, signY + 34, { align: "right" });
+  pdf.line(boxLeft, lineAt, right, lineAt);
+  if (showSignerName) {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    writeRightLines(pdf, signerName, right, lineAt + 5, boxWidth, 4.2);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.text("NIP. ..............................", right, lineAt + 10, { align: "right" });
+  } else {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.text("NIP. ..............................", right, lineAt + 5, { align: "right" });
+  }
 
   const pages = pdf.getNumberOfPages();
   for (let page = 1; page <= pages; page += 1) {

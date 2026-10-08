@@ -12,6 +12,7 @@ export type Page =
   | "profil"
   | "bendahara"
   | "log"
+  | "pemeliharaan"
   | "akun";
 
 export type Student = {
@@ -19,6 +20,10 @@ export type Student = {
   name: string;
   className: string;
   paid: number[];
+  sppArrears?: number;
+  nonSppArrears?: number;
+  sppUnpaidCount?: number;
+  sppTotalCount?: number;
   nisn: string;
   dbId?: number;
 };

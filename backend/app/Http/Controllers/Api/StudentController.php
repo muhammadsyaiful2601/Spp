@@ -86,7 +86,25 @@ class StudentController extends Controller
         return response()->json([
             'data' => [
                 'spp' => DB::table('spp_bills')->where('student_id', $student)->where('academic_year_id', $yearId)->orderByRaw('CASE WHEN month >= 7 THEN month - 6 ELSE month + 6 END')->get(),
-                'non_spp' => DB::table('non_spp_bills')->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')->where('non_spp_bills.student_id', $student)->select('non_spp_bills.*', 'payment_positions.name as position')->get(),
+                'non_spp' => DB::table('position_rates')
+                    ->leftJoin('non_spp_bills', function ($join) use ($student) {
+                        $join->on('position_rates.id', '=', 'non_spp_bills.position_rate_id')
+                            ->where('non_spp_bills.student_id', '=', $student);
+                    })
+                    ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+                    ->where('position_rates.academic_year_id', $yearId)
+                    ->where('position_rates.class_level_id', $levelId)
+                    ->where('payment_positions.is_active', true)
+                    ->select([
+                        'position_rates.id',
+                        'position_rates.id as position_rate_id',
+                        'non_spp_bills.id as bill_id',
+                        DB::raw('COALESCE(non_spp_bills.amount_due, position_rates.amount) as amount_due'),
+                        DB::raw('COALESCE(non_spp_bills.amount_paid, 0) as amount_paid'),
+                        DB::raw("COALESCE(non_spp_bills.status, 'belum_bayar') as status"),
+                        'payment_positions.name as position',
+                    ])
+                    ->get(),
             ],
         ]);
     }

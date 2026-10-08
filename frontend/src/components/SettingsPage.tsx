@@ -7,6 +7,7 @@ import {
   Loader2,
   Plus,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { months } from "../constants";
@@ -45,6 +46,7 @@ export function SettingsPage({
   onSetCostClass,
   onSppAmountChange,
   onTogglePosition,
+  onDeletePosition,
   setActiveTab,
   sppRows,
 }: {
@@ -63,6 +65,7 @@ export function SettingsPage({
   onSetCostClass: (classLevelId: number) => void;
   onSppAmountChange: (classLevelId: number, amount: number) => void;
   onTogglePosition: (row: CostRow, next: boolean) => void;
+  onDeletePosition: (row: CostRow) => void;
   setActiveTab: (value: "spp" | "biaya") => void;
   sppRows: SppRow[];
 }) {
@@ -338,13 +341,23 @@ export function SettingsPage({
                   >
                     <i />
                   </button>
+                  <button
+                    type="button"
+                    className="icon-button cost-delete-button"
+                    aria-label={`Hapus pos ${row.name}`}
+                    title={`Hapus pos ${row.name}`}
+                    disabled={busy}
+                    onClick={() => onDeletePosition(row)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </article>
               ))
             )}
           </div>
           <div className="settings-actions">
             <span>
-              Tarif disimpan untuk tingkat kelas terpilih dan berlaku di semua pos.
+              Tarif disimpan untuk kelas dan tahun ajaran terpilih.
             </span>
             <button
               className="button button-primary"

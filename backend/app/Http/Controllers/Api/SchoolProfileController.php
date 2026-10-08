@@ -22,6 +22,21 @@ class SchoolProfileController extends Controller
         ])]);
     }
 
+    public function publicLogo()
+    {
+        $path = $this->profile()->logo_path;
+        if (! $path || ! Storage::disk('public')->exists($path)) {
+            return response()->noContent();
+        }
+
+        return Storage::disk('public')->response(
+            $path,
+            null,
+            ['Cache-Control' => 'no-cache, no-store, must-revalidate'],
+            'inline',
+        );
+    }
+
     public function show(): JsonResponse
     {
         return response()->json(['data' => $this->profile()]);

@@ -12,6 +12,9 @@ export function Dashboard({
   transactions,
   totalPaid,
   outstanding,
+  sppPaidCount,
+  sppUnpaidCount,
+  sppTotalCount,
   monthlyRevenue,
   now,
   academicYearLabel,
@@ -31,6 +34,9 @@ export function Dashboard({
   transactions: Transaction[];
   totalPaid: number;
   outstanding: number;
+  sppPaidCount: number;
+  sppUnpaidCount: number;
+  sppTotalCount: number;
   monthlyRevenue: number[];
   now: Date;
   academicYearLabel: string;
@@ -55,12 +61,8 @@ export function Dashboard({
   const revenue = monthlyRevenue.map((amount) =>
     amount > 0 ? Math.max(4, Math.round((amount / peak) * 100)) : 2,
   );
-  const averagePaid = students.length
-    ? Math.round(
-        (students.reduce((sum, student) => sum + student.paid.length, 0) /
-          (students.length * 12)) *
-          100,
-      )
+  const averagePaid = sppTotalCount
+    ? Math.round((sppPaidCount / sppTotalCount) * 100)
     : 0;
   // Live month-over-month movement, derived from the real revenue buckets.
   const trend = revenueTrend(monthlyRevenue, now, academicStartYear);
@@ -118,10 +120,7 @@ export function Dashboard({
           <strong>{money(outstanding)}</strong>
           <div className="metric-foot">
             <span className="metric-caption">
-              {students.reduce(
-                (sum, student) => sum + (12 - student.paid.length),
-                0,
-              )}{" "}
+              {sppUnpaidCount}{" "}
               tagihan belum lunas
             </span>
           </div>
@@ -270,19 +269,12 @@ export function Dashboard({
               <div>
                 <i className="legend-paid" />
                 <span>Sudah dibayar</span>
-                <strong>
-                  {students.reduce((sum, item) => sum + item.paid.length, 0)}
-                </strong>
+                <strong>{sppPaidCount}</strong>
               </div>
               <div>
                 <i className="legend-unpaid" />
                 <span>Belum dibayar</span>
-                <strong>
-                  {students.reduce(
-                    (sum, item) => sum + 12 - item.paid.length,
-                    0,
-                  )}
-                </strong>
+                <strong>{sppUnpaidCount}</strong>
               </div>
             </div>
           </div>

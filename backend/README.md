@@ -7,6 +7,21 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Pemeliharaan database (khusus pimpinan)
+
+Menu **Backup & cache** tersedia bagi akun pimpinan yang sudah memverifikasi
+email. Backup diunduh sebagai file SQL untuk database MySQL atau MariaDB;
+file sementara disimpan di area privat dan dihapus setelah dikirim.
+Tombol **Bersihkan cache** menghapus cache aplikasi Laravel tanpa menghapus
+data transaksi atau akun.
+
+API:
+
+- `GET /api/v1/pimpinan/backup-database`
+- `POST /api/v1/pimpinan/bersihkan-cache`
+
+Kedua endpoint membutuhkan sesi Sanctum terverifikasi dengan peran `pimpinan`.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:

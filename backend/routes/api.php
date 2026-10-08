@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AcademicYearController;
 use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\MaintenanceController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\Api\ReportController;
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
     Route::get('/public/sekolah-profile', [SchoolProfileController::class, 'publicProfile']);
+    Route::get('/public/sekolah-profile/logo', [SchoolProfileController::class, 'publicLogo']);
     // Brute-force guard: 10 attempts per minute per IP. High enough that a real
     // user mistyping a few times never notices, low enough that password
     // guessing becomes useless. Applies per IP (not per username) so an
@@ -60,6 +62,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('/tarif-non-spp', [PricingController::class, 'positionRates']);
                 Route::post('/tarif-non-spp', [PricingController::class, 'savePositionRates']);
                 Route::post('/pos-biaya', [PricingController::class, 'storePosition']);
+                Route::delete('/pos-biaya/{position}', [PricingController::class, 'deletePosition'])->whereNumber('position');
                 Route::post('/tahun-ajaran', [AcademicYearController::class, 'store']);
                 Route::post('/tahun-ajaran/{year}/aktifkan', [AcademicYearController::class, 'activate']);
                 Route::get('/bendahara', [TreasurerController::class, 'index']);
@@ -70,6 +73,10 @@ Route::prefix('v1')->group(function () {
                 Route::post('/bendahara/{treasurer}/status', [TreasurerController::class, 'setActive'])->whereNumber('treasurer');
                 // Audit trail. Read-only by design: the log has no write route.
                 Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);
+                Route::get('/backup-database', [MaintenanceController::class, 'backup'])
+                    ->middleware('throttle:5,1');
+                Route::post('/bersihkan-cache', [MaintenanceController::class, 'clearCache'])
+                    ->middleware('throttle:5,1');
             });
 
             Route::prefix('admin')->middleware('role:admin')->group(function () {

@@ -93,10 +93,19 @@ class SchoolPaymentApiTest extends TestCase
         ])->assertOk();
         $token = $login->json('data.token');
         $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        // A recorded payment belongs to the bill's academic year even when its
+        // actual receipt date falls after that year has ended.
+        DB::table('academic_years')->where('id', $yearId)->update([
+            'name' => '2024/2025',
+            'start_year' => 2024,
+            'end_year' => 2025,
+        ]);
         // Only the first 8 academic months (Jul..Feb) are paid, so months 3 and 4
         // of the calendar year are still outstanding.
         $studentId = $this->makeStudent('2401001', '0128456731', 1, 8);
         $months = [3, 4];
+        $before = $this->withToken($token)->getJson('/api/v1/data/portal')
+            ->assertOk()->json('data.summary');
 
         $payment = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/spp', [
             'student_id' => $studentId,
@@ -117,6 +126,16 @@ class SchoolPaymentApiTest extends TestCase
             'student_id' => $studentId,
             'type' => 'spp',
         ]);
+        $after = $this->withToken($token)->getJson('/api/v1/data/portal')
+            ->assertOk()->json('data.summary');
+        $this->assertEquals(
+            (float) $before['total_received'] + (float) $payment->json('data.amount'),
+            (float) $after['total_received'],
+        );
+        $this->assertEquals(
+            (float) $before['spp_arrears'] - (float) $payment->json('data.amount'),
+            (float) $after['spp_arrears'],
+        );
 
         $this->withToken($token)->getJson('/api/v1/admin/transaksi/'.$payment->json('data.transaction_number').'/cetak-kuitansi')
             ->assertOk()
@@ -155,8 +174,15 @@ class SchoolPaymentApiTest extends TestCase
         $this->assertSame(range(0, 7), $first['paid_months']);
         $second = collect($students)->firstWhere('student_number', '2203018');
         $this->assertSame(range(0, 5), $second['paid_months']);
+        $this->assertSame(4, $first['spp_unpaid_count']);
+        $this->assertEquals(1400000, $first['spp_arrears']);
+        $this->assertSame(6, $second['spp_unpaid_count']);
+        $this->assertEquals(2220000, $second['spp_arrears']);
 
         // Figures must be derived from stored rows, not from placeholders.
+        $this->assertSame(14, $response->json('data.summary.spp_paid_count'));
+        $this->assertSame(10, $response->json('data.summary.spp_unpaid_count'));
+        $this->assertSame(24, $response->json('data.summary.spp_total_count'));
         $this->assertSame(
             (float) DB::table('payment_transactions')->sum('amount'),
             (float) $response->json('data.summary.total_received'),
@@ -167,11 +193,129 @@ class SchoolPaymentApiTest extends TestCase
         );
     }
 
+    public function test_portal_counts_and_prices_spp_bills_not_created_yet(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'admin',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $studentId = DB::table('students')->insertGetId([
+            'nisn' => '0198765432',
+            'student_number' => '2601001',
+            'full_name' => 'Siswa Tanpa Tagihan',
+            'class_level_id' => DB::table('class_levels')->where('sort_order', 1)->value('id'),
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        $monthlyAmount = (float) DB::table('spp_periods')
+            ->where('academic_year_id', $yearId)
+            ->where('class_level_id', DB::table('students')->where('id', $studentId)->value('class_level_id'))
+            ->where('month_start', 7)
+            ->value('monthly_amount');
+
+        $initial = $this->withToken($token)->getJson('/api/v1/data/portal')
+            ->assertOk()->json('data.summary');
+        $this->assertSame(12, $initial['spp_unpaid_count']);
+        $this->assertSame(0, $initial['spp_paid_count']);
+        $this->assertSame(12, $initial['spp_total_count']);
+        $this->assertEquals(12 * $monthlyAmount, $initial['spp_arrears']);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
+            ->assertOk();
+
+        $afterBillsCreated = $this->withToken($token)->getJson('/api/v1/data/portal')
+            ->assertOk()->json('data.summary');
+        $this->assertSame($initial['spp_unpaid_count'], $afterBillsCreated['spp_unpaid_count']);
+        $this->assertEquals($initial['spp_arrears'], $afterBillsCreated['spp_arrears']);
+    }
+
+    public function test_portal_includes_remaining_non_spp_bills_in_each_student_arrears(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'admin',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        $classLevelId = DB::table('class_levels')->where('sort_order', 1)->value('id');
+        $studentId = DB::table('students')->insertGetId([
+            'nisn' => '0198765432',
+            'student_number' => '2601001',
+            'full_name' => 'Siswa Biaya Lain',
+            'class_level_id' => $classLevelId,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $rates = DB::table('position_rates')
+            ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+            ->where('position_rates.academic_year_id', $yearId)
+            ->where('position_rates.class_level_id', $classLevelId)
+            ->where('payment_positions.is_active', true)
+            ->get(['position_rates.id', 'position_rates.amount']);
+        $this->assertNotEmpty($rates);
+
+        $partiallyPaidRate = $rates->first();
+        $amountPaid = 50000;
+        DB::table('non_spp_bills')->insert([
+            'student_id' => $studentId,
+            'position_rate_id' => $partiallyPaidRate->id,
+            'amount_due' => $partiallyPaidRate->amount,
+            'amount_paid' => $amountPaid,
+            'status' => 'sebagian',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $expectedArrears = $rates->sum('amount') - $amountPaid;
+
+        $student = collect(
+            $this->withToken($token)->getJson('/api/v1/data/portal')
+                ->assertOk()->json('data.students'),
+        )->firstWhere('id', $studentId);
+
+        $this->assertEquals($expectedArrears, $student['non_spp_arrears']);
+    }
+
+    public function test_public_school_logo_endpoint_serves_the_current_uploaded_logo(): void
+    {
+        $this->seed();
+        Storage::fake('public');
+        $this->getJson('/api/v1/public/sekolah-profile')->assertOk();
+        $path = UploadedFile::fake()->image('school-logo.png', 32, 32)
+            ->store('school-profile', 'public');
+        DB::table('school_profiles')->update(['logo_path' => $path]);
+
+        $this->get('/api/v1/public/sekolah-profile/logo')
+            ->assertOk()
+            ->assertHeader('Content-Type', 'image/png');
+    }
+
     public function test_portal_endpoint_requires_authentication(): void
     {
         $this->seed();
 
         $this->getJson('/api/v1/data/portal')->assertUnauthorized();
+    }
+
+    public function test_portal_defaults_to_latest_year_when_no_year_is_active(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'admin',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        DB::table('academic_years')->where('id', $yearId)->update(['is_active' => false]);
+
+        $this->withToken($token)->getJson('/api/v1/data/portal')
+            ->assertOk()
+            ->assertJsonPath('data.academic_year.id', $yearId)
+            ->assertJsonPath('data.summary.spp_total_count', 0);
     }
 
     public function test_user_can_read_and_update_their_own_account(): void
@@ -520,6 +664,14 @@ class SchoolPaymentApiTest extends TestCase
             ->where('payment_positions.name', 'Uang Pembangunan')
             ->where('position_rates.class_level_id', $levelId)
             ->value('position_rates.id');
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        $bills = $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
+            ->assertOk();
+        $this->assertSame(
+            'belum_bayar',
+            collect($bills->json('data.non_spp'))->firstWhere('position_rate_id', $rate)['status'],
+        );
 
         $this->withToken($token)->postJson('/api/v1/admin/pembayaran/non-spp', [
             'student_id' => $studentId,
@@ -530,6 +682,13 @@ class SchoolPaymentApiTest extends TestCase
         $bill = DB::table('non_spp_bills')->where('student_id', $studentId)->where('position_rate_id', $rate)->first();
         $this->assertSame('sebagian', $bill->status);
         $this->assertSame(400000.0, (float) $bill->amount_paid);
+        $updatedBills = $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
+            ->assertOk();
+        $updatedCost = collect($updatedBills->json('data.non_spp'))
+            ->firstWhere('position_rate_id', $rate);
+        $this->assertSame('sebagian', $updatedCost['status']);
+        $this->assertSame(400000.0, (float) $updatedCost['amount_paid']);
 
         $this->withToken($token)->postJson('/api/v1/admin/pembayaran/non-spp', [
             'student_id' => $studentId,
@@ -1160,7 +1319,20 @@ class SchoolPaymentApiTest extends TestCase
         );
         $this->assertFalse((bool) DB::table('payment_positions')->where('id', $positionId)->value('is_active'));
 
-        // A deactivated position disappears from the portal payment options.
+        // The settings endpoint still returns inactive rows, but only for the
+        // selected year, so the leadership user can turn the position back on.
+        $settingsRates = $this->withToken($token)
+            ->getJson("/api/v1/pimpinan/tarif-non-spp?academic_year_id={$yearId}")
+            ->assertOk()->json('data');
+        $this->assertTrue(collect($settingsRates)->contains(
+            fn ($rate) => (int) $rate['payment_position_id'] === $positionId && ! (bool) $rate['is_active'],
+        ));
+        $this->assertSame(
+            DB::table('position_rates')->where('academic_year_id', $yearId)->count(),
+            count($settingsRates),
+        );
+
+        // An inactive position disappears from payment options.
         $portal = $this->withToken($token)->getJson('/api/v1/data/portal')->assertOk();
         $names = collect($portal->json('data.position_rates'))->pluck('position');
         $this->assertFalse($names->contains('Uang Kegiatan'));
@@ -1172,6 +1344,53 @@ class SchoolPaymentApiTest extends TestCase
             'positions' => [['payment_position_id' => $positionId, 'amount' => 275000, 'is_active' => true]],
         ])->assertOk();
         $this->assertTrue((bool) DB::table('payment_positions')->where('id', $positionId)->value('is_active'));
+    }
+
+    public function test_leadership_can_delete_unused_cost_position_but_not_one_with_bill_history(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $yearId = (int) DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $deletable = $this->withToken($token)->postJson('/api/v1/pimpinan/pos-biaya', [
+            'name' => 'Pos Belum Dipakai',
+            'type' => 'tahunan',
+            'amount' => 125000,
+            'academic_year_id' => $yearId,
+        ])->assertCreated()->json('data.id');
+        $this->withToken($token)->deleteJson("/api/v1/pimpinan/pos-biaya/{$deletable}")
+            ->assertOk();
+        $this->assertDatabaseMissing('payment_positions', ['id' => $deletable]);
+        $this->assertDatabaseMissing('position_rates', ['payment_position_id' => $deletable]);
+
+        $protected = $this->withToken($token)->postJson('/api/v1/pimpinan/pos-biaya', [
+            'name' => 'Pos Ada Riwayat',
+            'type' => 'tahunan',
+            'amount' => 225000,
+            'academic_year_id' => $yearId,
+        ])->assertCreated()->json('data.id');
+        $studentId = $this->makeStudent('2601001', '0198765432', 1, 0);
+        $rateId = (int) DB::table('position_rates')
+            ->where('payment_position_id', $protected)
+            ->where('academic_year_id', $yearId)
+            ->value('id');
+        DB::table('non_spp_bills')->insert([
+            'student_id' => $studentId,
+            'position_rate_id' => $rateId,
+            'amount_due' => 225000,
+            'amount_paid' => 0,
+            'status' => 'belum_bayar',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->withToken($token)->deleteJson("/api/v1/pimpinan/pos-biaya/{$protected}")
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'message',
+                'Pos biaya tidak dapat dihapus karena sudah memiliki catatan tagihan atau pembayaran. Nonaktifkan pos agar riwayat tetap tersimpan.',
+            );
+        $this->assertDatabaseHas('payment_positions', ['id' => $protected]);
     }
 
     public function test_leadership_can_add_a_new_cost_position_priced_for_every_class(): void

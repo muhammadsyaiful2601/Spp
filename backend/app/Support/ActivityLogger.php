@@ -31,13 +31,14 @@ final class ActivityLogger
         'tarif' => 'Tarif & pos biaya',
         'tahun_ajaran' => 'Tahun ajaran',
         'profil_sekolah' => 'Profil sekolah',
+        'sistem' => 'Pemeliharaan sistem',
     ];
 
     /**
      * Write one log row.
      *
-     * @param  string  $action       Machine key, e.g. `pembayaran.spp`.
-     * @param  string  $category     Grouping key, see CATEGORY_LABELS.
+     * @param  string  $action  Machine key, e.g. `pembayaran.spp`.
+     * @param  string  $category  Grouping key, see CATEGORY_LABELS.
      * @param  string  $description  Human-readable summary, already in Indonesian.
      * @param  array{
      *     actor?: User|null,

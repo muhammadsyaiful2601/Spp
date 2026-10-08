@@ -18,6 +18,7 @@ class DashboardController extends Controller
     public function portal(Request $request): JsonResponse
     {
         $yearId = $request->integer('academic_year_id') ?: DB::table('academic_years')->where('is_active', true)->value('id');
+        $yearId ??= DB::table('academic_years')->orderByDesc('start_year')->value('id');
 
         // A bogus id would reach summary()/monthlyRevenue() and dereference a null
         // year, so reject it up front with a clear message instead.
@@ -42,19 +43,89 @@ class DashboardController extends Controller
 
     private function students(?int $yearId): Collection
     {
-        $paid = DB::table('spp_bills')
-            ->where('status', 'lunas')
-            ->when($yearId, fn ($query) => $query->where('academic_year_id', $yearId))
-            ->get(['student_id', 'month'])
-            ->groupBy('student_id');
+        $periodRates = $yearId
+            ? DB::table('spp_periods')
+                ->where('academic_year_id', $yearId)
+                ->get(['class_level_id', 'month_start', 'month_end', 'monthly_amount'])
+            : collect();
+        $ratesByLevelAndMonth = collect();
+        foreach ($periodRates as $period) {
+            foreach (range((int) $period->month_start, (int) $period->month_end) as $month) {
+                $ratesByLevelAndMonth->put(
+                    "{$period->class_level_id}:{$month}",
+                    (float) $period->monthly_amount,
+                );
+            }
+        }
+        $billsByStudentAndMonth = $yearId
+            ? DB::table('spp_bills')
+                ->where('academic_year_id', $yearId)
+                ->get(['student_id', 'month', 'amount', 'status'])
+                ->keyBy(fn ($bill) => "{$bill->student_id}:{$bill->month}")
+            : collect();
+        $nonSppRates = $yearId
+            ? DB::table('position_rates')
+                ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+                ->where('position_rates.academic_year_id', $yearId)
+                ->where('payment_positions.is_active', true)
+                ->get([
+                    'position_rates.id',
+                    'position_rates.class_level_id',
+                    'position_rates.amount',
+                ])
+            : collect();
+        $nonSppBills = $yearId
+            ? DB::table('non_spp_bills')
+                ->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')
+                ->where('position_rates.academic_year_id', $yearId)
+                ->get([
+                    'non_spp_bills.student_id',
+                    'non_spp_bills.position_rate_id',
+                    'non_spp_bills.amount_due',
+                    'non_spp_bills.amount_paid',
+                ])
+                ->keyBy(fn ($bill) => "{$bill->student_id}:{$bill->position_rate_id}")
+            : collect();
 
         return DB::table('students')
             ->join('class_levels', 'class_levels.id', '=', 'students.class_level_id')
             ->where('students.is_active', true)
             ->orderBy('students.full_name')
-            ->get(['students.id', 'students.nisn', 'students.student_number', 'students.full_name', 'class_levels.name as class_name'])
-            ->map(function ($student) use ($paid) {
-                $months = $paid->get($student->id, collect())->pluck('month');
+            ->get([
+                'students.id', 'students.nisn', 'students.student_number',
+                'students.full_name', 'students.class_level_id', 'class_levels.name as class_name',
+            ])
+            ->map(function ($student) use ($ratesByLevelAndMonth, $billsByStudentAndMonth, $nonSppRates, $nonSppBills) {
+                $months = [];
+                $arrears = 0.0;
+                $nonSppArrears = 0.0;
+                $unpaidCount = 0;
+                $totalCount = 0;
+                foreach (range(1, 12) as $month) {
+                    $rate = $ratesByLevelAndMonth->get("{$student->class_level_id}:{$month}");
+                    if ($rate === null) {
+                        continue;
+                    }
+
+                    $totalCount++;
+                    $bill = $billsByStudentAndMonth->get("{$student->id}:{$month}");
+                    if ($bill?->status === 'lunas') {
+                        $months[] = $month;
+                    } else {
+                        $unpaidCount++;
+                        $arrears += (float) ($bill->amount ?? $rate);
+                    }
+                }
+                foreach ($nonSppRates as $rate) {
+                    if ((int) $rate->class_level_id !== (int) $student->class_level_id) {
+                        continue;
+                    }
+
+                    $bill = $nonSppBills->get("{$student->id}:{$rate->id}");
+                    $amountDue = (float) ($bill->amount_due ?? $rate->amount);
+                    $amountPaid = (float) ($bill->amount_paid ?? 0);
+                    $nonSppArrears += max(0, $amountDue - $amountPaid);
+                }
 
                 return [
                     'id' => (int) $student->id,
@@ -62,11 +133,14 @@ class DashboardController extends Controller
                     'nisn' => $student->nisn,
                     'name' => $student->full_name,
                     'class_name' => $student->class_name,
+                    'spp_arrears' => $arrears,
+                    'non_spp_arrears' => $nonSppArrears,
+                    'spp_unpaid_count' => $unpaidCount,
+                    'spp_total_count' => $totalCount,
                     // Academic order: Jul..Dec then Jan..Jun, matching the UI month grid.
-                    'paid_months' => $months
+                    'paid_months' => collect($months)
                         ->map(fn ($month) => $month >= 7 ? $month - 7 : $month + 5)
-                        ->sort()
-                        ->values(),
+                        ->sort()->values(),
                 ];
             });
     }
@@ -131,18 +205,27 @@ class DashboardController extends Controller
 
     private function summary(?int $yearId): array
     {
-        $received = DB::table('payment_transactions')->when($yearId, function ($query) use ($yearId) {
-            $year = DB::table('academic_years')->find($yearId);
-            $query->whereBetween('paid_at', ["{$year->start_year}-07-01 00:00:00", "{$year->end_year}-06-30 23:59:59"]);
-        })->sum('amount');
+        $received = $yearId
+            ? $this->transactionsForYear($yearId)->sum('payment_transactions.amount')
+            : DB::table('payment_transactions')->sum('amount');
 
-        $sppDue = DB::table('spp_bills')->where('status', 'belum_bayar')
-            ->when($yearId, fn ($query) => $query->where('academic_year_id', $yearId))->sum('amount');
-        $nonSppDue = DB::table('non_spp_bills')->sum(DB::raw('amount_due - amount_paid'));
+        $spp = $yearId ? $this->sppSummary($yearId) : [
+            'arrears' => 0.0,
+            'paid_count' => 0,
+            'unpaid_count' => 0,
+            'total_count' => 0,
+        ];
+        $nonSppDue = DB::table('non_spp_bills')
+            ->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')
+            ->when($yearId, fn ($query) => $query->where('position_rates.academic_year_id', $yearId))
+            ->sum(DB::raw('amount_due - amount_paid'));
 
         return [
             'total_received' => (float) $received,
-            'spp_arrears' => (float) $sppDue,
+            'spp_arrears' => $spp['arrears'],
+            'spp_paid_count' => $spp['paid_count'],
+            'spp_unpaid_count' => $spp['unpaid_count'],
+            'spp_total_count' => $spp['total_count'],
             'non_spp_arrears' => (float) $nonSppDue,
             'students_count' => DB::table('students')->where('is_active', true)->count(),
             // July..June buckets so the chart matches the academic month grid.
@@ -150,12 +233,71 @@ class DashboardController extends Controller
         ];
     }
 
+    private function sppSummary(int $yearId): array
+    {
+        $studentsByLevel = DB::table('students')
+            ->where('is_active', true)
+            ->select('class_level_id')
+            ->selectRaw('COUNT(*) as student_count')
+            ->groupBy('class_level_id')
+            ->pluck('student_count', 'class_level_id');
+
+        $billsByLevelAndMonth = DB::table('spp_bills')
+            ->join('students', 'students.id', '=', 'spp_bills.student_id')
+            ->where('spp_bills.academic_year_id', $yearId)
+            ->where('students.is_active', true)
+            ->select('students.class_level_id', 'spp_bills.month')
+            ->selectRaw('COUNT(*) as bill_count')
+            ->selectRaw("SUM(CASE WHEN spp_bills.status = 'lunas' THEN 1 ELSE 0 END) as paid_count")
+            ->selectRaw("SUM(CASE WHEN spp_bills.status = 'belum_bayar' THEN spp_bills.amount ELSE 0 END) as unpaid_amount")
+            ->groupBy('students.class_level_id', 'spp_bills.month')
+            ->get()
+            ->keyBy(fn ($bill) => "{$bill->class_level_id}:{$bill->month}");
+
+        $arrears = 0.0;
+        $paidCount = 0;
+        $unpaidCount = 0;
+        $totalCount = 0;
+
+        $periods = DB::table('spp_periods')
+            ->where('academic_year_id', $yearId)
+            ->get(['class_level_id', 'month_start', 'month_end', 'monthly_amount']);
+
+        foreach ($periods as $period) {
+            $studentCount = (int) ($studentsByLevel[$period->class_level_id] ?? 0);
+            if ($studentCount === 0) {
+                continue;
+            }
+
+            foreach (range((int) $period->month_start, (int) $period->month_end) as $month) {
+                $key = "{$period->class_level_id}:{$month}";
+                $bill = $billsByLevelAndMonth->get($key);
+                $paid = (int) ($bill->paid_count ?? 0);
+                $existing = (int) ($bill->bill_count ?? 0);
+                $missing = max(0, $studentCount - $existing);
+
+                $totalCount += $studentCount;
+                $paidCount += $paid;
+                $unpaidCount += max(0, $existing - $paid) + $missing;
+                $arrears += (float) ($bill->unpaid_amount ?? 0)
+                    + ($missing * (float) $period->monthly_amount);
+            }
+        }
+
+        return [
+            'arrears' => $arrears,
+            'paid_count' => $paidCount,
+            'unpaid_count' => $unpaidCount,
+            'total_count' => $totalCount,
+        ];
+    }
+
     private function monthlyRevenue(?int $yearId): array
     {
-        $rows = DB::table('payment_transactions')->when($yearId, function ($query) use ($yearId) {
-            $year = DB::table('academic_years')->find($yearId);
-            $query->whereBetween('paid_at', ["{$year->start_year}-07-01 00:00:00", "{$year->end_year}-06-30 23:59:59"]);
-        })->get(['paid_at', 'amount']);
+        $query = $yearId
+            ? $this->transactionsForYear($yearId)
+            : DB::table('payment_transactions');
+        $rows = $query->get(['payment_transactions.paid_at', 'payment_transactions.amount']);
 
         $buckets = array_fill(1, 12, 0.0);
         foreach ($rows as $row) {
@@ -168,6 +310,24 @@ class DashboardController extends Controller
         }
 
         return $ordered;
+    }
+
+    private function transactionsForYear(int $yearId)
+    {
+        return DB::table('payment_transactions')
+            ->where(function ($query) use ($yearId) {
+                $query->where(function ($spp) use ($yearId) {
+                    $spp->where('payment_transactions.type', 'spp')
+                        ->whereIn('payment_transactions.reference_id', DB::table('spp_bills')
+                            ->select('id')->where('academic_year_id', $yearId));
+                })->orWhere(function ($nonSpp) use ($yearId) {
+                    $nonSpp->where('payment_transactions.type', 'non_spp')
+                        ->whereIn('payment_transactions.reference_id', DB::table('non_spp_bills')
+                            ->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')
+                            ->where('position_rates.academic_year_id', $yearId)
+                            ->select('non_spp_bills.id'));
+                });
+            });
     }
 
     private function monthLabel(int $month): string

@@ -59,17 +59,55 @@ class PricingController extends Controller
         return response()->json(['message' => 'Tarif SPP berhasil disimpan.']);
     }
 
-    public function positionRates(): JsonResponse
+    public function positionRates(Request $request): JsonResponse
     {
+        $data = $request->validate([
+            'academic_year_id' => ['required', 'exists:academic_years,id'],
+        ]);
         $rates = DB::table('position_rates')
             ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
             ->join('academic_years', 'academic_years.id', '=', 'position_rates.academic_year_id')
             ->join('class_levels', 'class_levels.id', '=', 'position_rates.class_level_id')
-            ->where('payment_positions.is_active', true)
+            ->where('position_rates.academic_year_id', $data['academic_year_id'])
             ->select('position_rates.*', 'payment_positions.name as position', 'payment_positions.type', 'payment_positions.is_active', 'academic_years.name as academic_year', 'class_levels.name as class_level')
+            ->orderBy('class_levels.sort_order')
+            ->orderBy('payment_positions.name')
             ->get();
 
         return response()->json(['data' => $rates]);
+    }
+
+    public function deletePosition(int $position): JsonResponse
+    {
+        $paymentPosition = DB::table('payment_positions')->where('id', $position)->first();
+        abort_unless($paymentPosition, 404, 'Pos biaya tidak ditemukan.');
+        $hasBills = DB::table('non_spp_bills')
+            ->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')
+            ->where('position_rates.payment_position_id', $position)
+            ->exists();
+        abort_if(
+            $hasBills,
+            422,
+            'Pos biaya tidak dapat dihapus karena sudah memiliki catatan tagihan atau pembayaran. Nonaktifkan pos agar riwayat tetap tersimpan.',
+        );
+
+        DB::transaction(function () use ($position) {
+            DB::table('position_rates')->where('payment_position_id', $position)->delete();
+            DB::table('payment_positions')->where('id', $position)->delete();
+        });
+
+        ActivityLogger::record(
+            'tarif.pos_hapus',
+            'tarif',
+            "Menghapus pos biaya {$paymentPosition->name}.",
+            [
+                'subject_type' => 'payment_position',
+                'subject_id' => $position,
+                'subject_label' => $paymentPosition->name,
+            ],
+        );
+
+        return response()->json(['message' => 'Pos biaya berhasil dihapus.']);
     }
 
     public function savePositionRate(Request $request): JsonResponse

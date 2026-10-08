@@ -2,8 +2,6 @@
 
 Implementasi awal aplikasi pembayaran SPP dan biaya sekolah: React + Vite SPA di `frontend/` dan Laravel REST API + Sanctum di `backend/`.
 
-> **Deploy produksi?** Mulai dari [Panduan Hosting dan Deploy](DEPLOY.md). Untuk langkah rinci shared hosting, ikuti [Panduan Instalasi di cPanel](CPANEL.md) — meliputi Terminal, domain, PHP, MySQL, SMTP, SSL, backup, dan update.
-
 ## Menjalankan aplikasi
 
 > **Penting:** port backend dan `VITE_API_URL` harus sama persis. Default
@@ -129,7 +127,6 @@ Seluruh branding berada di tabel `school_profiles` — bukan di `localStorage` �
 - `POST /api/v1/pimpinan/sekolah-profile/upload-logo` (`role:pimpinan`) — mengunggah logo ke disk `public` (`logo_path`); berkas lama otomatis terhapus saat diganti. Audit `profil_sekolah.berkas`.
 - `GET /api/v1/public/sekolah-profile` mengembalikan identitas + `foundation_name` + `receipt_note` + warna + logo + favicon. SPA memakai nilai server sebagai **kebenaran tunggal** (efek mirror di `App.tsx`); `localStorage` (`cendekia-profile`) hanya paint pertama saat request masih berjalan atau server tidak terjangkau.
 - Tombol **Simpan profil** mengirim identitas ke server **dan** mendorong warna tema bila berbeda dari nilai server — tidak ada perubahan branding yang hanya hidup di browser. Tombol **Simpan tema** tetap tersedia untuk menyimpan warna saja.
-- Halaman ini **khusus `pimpinan`**: akun `admin` (bendahara) **tidak melihat** bagian logo, favicon, dan tema warna sama sekali — hanya formulir identitas read-only tanpa tombol simpan — tetapi kartu verifikasi email di atasnya tetap aktif agar bendahara yang belum verifikasi bisa menyelesaikan verifikasi dari layar ini. Backend juga mengunci seluruh endpoint branding di `role:pimpinan`, dan handler frontend menolak aksi non-pimpinan dengan toast.
 - Warna yang hanya dipratinjau (belum disimpan) akan kembali ke nilai server setelah muat ulang — perilaku yang benar; tekan **Simpan tema** atau **Simpan profil** agar bertahan.
 
 > Logo yang selama ini hanya tersimpan di `localStorage` perangkat tidak ikut terpindah, karena memang tidak pernah sampai ke server. Pimpinan cukup mengunggah ulang logo **sekali**; setelah itu tersimpan permanen di database.
@@ -432,14 +429,6 @@ Isi `{ "identifier": "admin atau admin@sekolah.sch.id" }`, lalu `{ token, passwo
 
 Kode 64 karakter **disimpan sebagai hash SHA-256** di `password_reset_tokens` — kalau tabelnya bocor, token tidak bisa dipakai. Setelah dipakai, **semua token perangkat ikut dicabut** sehingga sesi lama langsung mati bersama kata sandi lamanya.
 
-Email reset kini memuat **tautan langsung** `FRONTEND_URL/?kode=<64 karakter>`. Tombol *Kirim tautan atur ulang* **tidak lagi langsung membuka form reset**: layar parkir di *Cek email Anda* dan menunggu — halaman reset baru terbuka tepat di langkah *buat kata sandi baru* dengan kode sudah terisi otomatis, begitu tautan di email diklik. Tiga catatan keamanannya:
-
-- Kode **langsung dihapus dari URL** begitu halaman dibuka (`history.replaceState`), sehingga tidak menetap di address bar, history browser, maupun header `Referer`.
-- Parameter `kode` hanya dipercaya kalau persis **64 karakter alphanumeric** (`Str::random(64)`); selain itu dibuang, tidak pernah disalin ke form.
-- Kode mentah **tetap dicetak di email** sebagai cadangan untuk klien mail yang tidak merender tautan; layar *Cek email Anda* menyediakan tombol *Tautan tidak bisa diklik? Masukkan kode manual* yang membuka form reset manual — tautan menambah kenyamanan, tidak menghapus lapisan verifikasi.
-
-Gerbang sebenarnya tetap di server: `POST /auth/reset-password` menuntut kode yang cocok dengan hash + masa berlaku, jadi membuka halaman reset tanpa email hanya menghasilkan form yang akan ditolak server.
-
 ### Verifikasi email
 
 Kode 6 digit dikirim ke email lalu diinput di **halaman Profil sekolah**:
@@ -485,38 +474,7 @@ Isi email (Bahasa Indonesia):
 - Konfirmasi mencabut **seluruh** token sesi akun (semua perangkat — kasus kata sandi bocor tidak bisa ditebak dari satu perangkat saja), lalu mencatat audit `akun.keluar_email` dengan akun yang dicabut sebagai aktor. Klik kedua kali tidak menulis audit baru: no-op bukan peristiwa.
 - Kegagalan SMTP **tidak pernah membatalkan login** — dicatat via `report()`, sign-in tetap `200`. Email dikirim **sinkron**, bukan lewat antrean, karena deployment tidak menjalankan queue worker (notification yang di-queue tidak akan pernah terkirim).
 
-Ditutup `LoginAlertEmailTest` (12 tes): kirim / tidak kirim per kondisi akun, isi email + tautan bertanda tangan, halaman GET yang inert, POST yang mencabut + audit, idempotensi, 403 untuk URL tanpa tanda tangan, diutak-atik, dan kedaluwarsa, serta dua tes throttle login di bawah.
-
-### Proteksi brute-force (throttle rute auth)
-
-Audit keamanan menemukan satu lubang nyata: `POST /api/v1/auth/login` **tidak punya batas percobaan** — kata sandi bisa ditebak berapa pun tanpa hambatan (SQL injection, XSS, dan CSRF sudah aman: query memakai binding, output di-escape, token `@csrf` terpasang).
-
-Rutenya kini dibungkus **`throttle:10,1`**: maksimal **10 percobaan login per menit per IP**. Ambang itu sengaja tinggi — pengguna yang salah ketik beberapa kali tidak akan tersentuh — tapi terlalu rendah untuk menebak kata sandi (10 percobaan/menit = 14.400/hari, tetap masuk akal untuk audit rate tapi tidak cukup untuk menembus password yang kuat).
-
-Detail yang disengaja:
-
-- **Per IP, bukan per username** — penyerang tidak bisa menghindari throttle dengan menggilir username. Sebaliknya, satu IP yang memblokir login juga memblokir semua username dari IP itu; itu trade-off yang diterima karena dampaknya hanya satu menit.
-- **Membalas JSON, bukan halaman error HTML** — frontend membaca `429` dan menampilkan *"Terlalu banyak percobaan login. Tunggu satu menit, lalu coba lagi."* (`isRateLimited()` di `frontend/src/api.ts`), bukan pesan "username atau kata sandi tidak sesuai" yang menyesatkan.
-- **Throttle menghitung semua request ke rute itu**, bukan hanya yang gagal — 10 login *berhasil* beruntun dari IP yang sama juga kena batas. Wajar untuk perilaku normal.
-- Setelah jendela satu menit berlalu, hitungan reset otomatis — tidak ada mekanisme unlock manual.
-
-Ditutup dua tes di `LoginAlertEmailTest`: 10 kegagalan beruntun dijawab normal (422), percobaan ke-11 kena throttle (429 JSON, bukan HTML), dan login dengan kredensial benar tetap berhasil setelah jendela throttle terbuka.
-
-#### Putaran kedua: tiga rute auth sisanya
-
-Audit ulang menemukan celah serupa pada endpoint yang menjawab tebakan terhadap rahasia berukuran tetap:
-
-| Rute | Batas | Alasan |
-|---|---|---|
-| `POST /auth/verification/verify` | `throttle:10,1` | Kode hanya **6 digit** (10⁶ kombinasi), berlaku 30 menit, dan sebelumnya tanpa lockout sama sekali. Tanpa batas, sesi yang dicuri (password bocor tapi inbox tidak) bisa menyapu seluruh ruang tebakan jauh sebelum kode kedaluwarsa — mengalahkan tujuan verifikasi itu sendiri. |
-| `POST /auth/forgot-password` | `throttle:5,1` | Endpoint anonim: **setiap request mengirim email dan merotasi token reset** (`updateOrInsert`). Tanpa batas, ini jadi alat mail-bombing sekaligus cara membunuh kode reset yang sah di inbox korban. Sengaja lebih ketat dari login karena tiap hit punya efek nyata. |
-| `POST /auth/reset-password` | `throttle:10,1` | Defence-in-depth. Token 64 karakter acak membuat tebakan tidak praktis, tapi rute tetap menerima hard stop yang sama seperti seluruh permukaan auth. |
-
-Catatan: konfigurasi `auth.passwords.users.throttle => 60` yang ada di `config/auth.php` **tidak menolong di sini** — controller pemulihan tidak memakai Password broker (menulis `password_reset_tokens` secara manual), jadi config itu kode mati. Throttle harus ditanam di level rute.
-
-Sama seperti login: per IP, membalas **JSON 429** (bukan halaman error HTML), dan frontend menerjemahkannya lewat `isRateLimited()` — form lupa sandi, reset, dan kartu verifikasi kini menampilkan *"Tunggu satu menit, lalu coba lagi."* alih-alih pesan yang menyesatkan.
-
-Ditutup tiga tes di `SchoolPaymentApiTest`: 10 kode salah dijawab normal (422) lalu percobaan ke-11 kena throttle (429) dan akun tetap belum terverifikasi; 5 permintaan lupa sandi lolos lalu yang ke-6 kena throttle **sebelum mengirim email keenam**; dan 10 token reset salah dijawab 422 lalu yang ke-11 kena throttle — kata sandi tidak pernah berubah.
+Ditutup `LoginAlertEmailTest` (10 tes): kirim / tidak kirim per kondisi akun, isi email + tautan bertanda tangan, halaman GET yang inert, POST yang mencabut + audit, idempotensi, serta 403 untuk URL tanpa tanda tangan, diutak-atik, dan kedaluwarsa.
 
 ### Gate: akun belum verifikasi tidak bisa apa-apa
 
@@ -689,7 +647,7 @@ php artisan config:cache
 > Frontend menyimpan cache baca-aja di `localStorage` (`cendekia-students`, `cendekia-transactions`, `cendekia-spp-amounts`, `cendekia-profile`). Gunakan tombol **Bersihkan cache** di halaman **Akun saya** untuk menghapusnya sekaligus mengosongkan cache React Query — lihat [Bersihkan cache](#bersihkan-cache). Key juga bisa dihapus manual lewat devtools. Semua angka dashboard (total penerimaan, tunggakan, grafik bulanan) berasal dari database.
 
 ## Bersihkan cache
-
+ta
 Portal menyimpan dua lapis cache agar tampilan pertama tetap cepat:
 
 1. **`localStorage`** — salinan baca-aja `cendekia-students`, `cendekia-transactions`, `cendekia-spp-amounts`, dan `cendekia-profile`.

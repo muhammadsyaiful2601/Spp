@@ -3,34 +3,48 @@ import { Check, X } from "lucide-react";
 import { money } from "../lib/format";
 import { monthNames } from "../constants";
 
+type PositionCost = Cost & { rateId: number };
+
 export function PaymentModal({
   activeCost,
   payAmount,
   payKind,
   payMonths,
+  paidMonths,
   positionRates,
+  sppAmountsByMonth,
   remainingCost,
+  paymentBusy,
+  paymentError,
   savePayment,
   selected,
   selectedCost,
   selectedSppAmount,
+  paymentBillsLoading,
+  paymentBillsError,
   setModal,
   setPayAmount,
   setPayCost,
   setPayKind,
   setPayMonths,
 }: {
-  activeCost: Cost | undefined;
+  activeCost: PositionCost | undefined;
   modal: ModalKind;
   payAmount: number;
   payKind: "spp" | "non-spp";
   payMonths: number[];
-  positionRates: Cost[];
+  paidMonths: number[];
+  positionRates: PositionCost[];
+  sppAmountsByMonth: number[];
   remainingCost: number;
+  paymentBusy: boolean;
+  paymentError: string;
   savePayment: () => void;
   selected: Student;
   selectedCost: Cost | undefined;
   selectedSppAmount: number;
+  paymentBillsLoading: boolean;
+  paymentBillsError: boolean;
   setModal: (value: ModalKind) => void;
   setPayAmount: (value: number) => void;
   setPayCost: (value: string) => void;
@@ -85,22 +99,25 @@ export function PaymentModal({
                 >
                   SPP bulanan
                 </button>
-                <button
-                  className={payKind === "non-spp" ? "selected" : ""}
-                  onClick={() => setPayKind("non-spp")}
-                >
-                  Biaya lainnya
-                </button>
+                {(positionRates.length > 0 || payKind === "non-spp") && (
+                  <button
+                    className={payKind === "non-spp" ? "selected" : ""}
+                    onClick={() => setPayKind("non-spp")}
+                    disabled={positionRates.length === 0 && payKind !== "non-spp"}
+                  >
+                    Biaya lainnya
+                  </button>
+                )}
               </div>
               {payKind === "spp" ? (
                 <>
                   <div className="field-label-row">
                     <label>Pilih bulan yang akan dibayar</label>
-                    <span>Tarif {money(selectedSppAmount)} / bulan</span>
+                    <span>Tarif sesuai bulan · {money(selectedSppAmount)} / bulan</span>
                   </div>
                   <div className="month-grid">
                     {monthNames.map((month, index) => {
-                      const isPaid = selected.paid.includes(index);
+                      const isPaid = paidMonths.includes(index);
                       return (
                         <button
                           key={month}
@@ -116,7 +133,9 @@ export function PaymentModal({
                         >
                           {isPaid ? <Check size={13} /> : null}
                           <span>{month}</span>
-                          <small>{isPaid ? "Lunas" : "Belum bayar"}</small>
+                          <small>
+                            {isPaid ? "Lunas" : money(sppAmountsByMonth[index] ?? selectedSppAmount)}
+                          </small>
                         </button>
                       );
                     })}
@@ -124,50 +143,57 @@ export function PaymentModal({
                 </>
               ) : (
                 <div className="form-field">
-                  <label htmlFor="pay-cost">Pilih pos biaya</label>
-                  <select
-                    id="pay-cost"
-                    value={activeCost?.name ?? ""}
-                    disabled={positionRates.length === 0}
-                    onChange={(event) => {
-                      const cost = positionRates.find(
-                        (item) => item.name === event.target.value,
-                      );
-                      setPayCost(event.target.value);
-                      setPayAmount(cost?.amount ?? 0);
-                    }}
-                  >
-                    {positionRates.length === 0 ? (
-                      <option value="">Belum ada pos biaya</option>
-                    ) : (
-                      positionRates.map((cost) => (
-                        <option key={cost.name} value={cost.name}>
-                          {cost.name} · {money(cost.amount)}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  {selectedCost?.type === "Cicilan" && (
+                  {positionRates.length > 0 ? (
                     <>
-                      <label htmlFor="pay-amount">Jumlah cicilan</label>
-                      <input
-                        id="pay-amount"
-                        type="number"
-                        min="1"
-                        max={remainingCost}
-                        step="10000"
-                        value={Math.min(payAmount, remainingCost)}
-                        onChange={(event) =>
-                          setPayAmount(Number(event.target.value))
-                        }
-                      />
+                      <label htmlFor="pay-cost">Pilih pos biaya</label>
+                      <select
+                        id="pay-cost"
+                        value={activeCost?.rateId ?? ""}
+                        onChange={(event) => {
+                          const cost = positionRates.find(
+                            (item) => item.rateId === Number(event.target.value),
+                          );
+                          setPayCost(cost?.name ?? "");
+                          setPayAmount(cost?.amount ?? 0);
+                        }}
+                      >
+                        {positionRates.map((cost) => (
+                          <option key={cost.rateId} value={cost.rateId}>
+                            {cost.name} · Sisa {money(cost.amount)}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedCost?.type === "Cicilan" && (
+                        <>
+                          <label htmlFor="pay-amount">Jumlah cicilan</label>
+                          <input
+                            id="pay-amount"
+                            type="number"
+                            min="1"
+                            max={remainingCost}
+                            step="10000"
+                            value={Math.min(payAmount, remainingCost)}
+                            onChange={(event) =>
+                              setPayAmount(Number(event.target.value))
+                            }
+                          />
+                        </>
+                      )}
+                      <small className="field-hint">
+                        {selectedCost?.type === "Cicilan"
+                          ? `Sisa tagihan ${money(remainingCost)}.`
+                          : "Pembayaran dicatat sebagai pelunasan pos biaya terpilih."}
+                      </small>
                     </>
+                  ) : (
+                    <p className="field-hint" role="status">
+                      {paymentBillsLoading
+                        ? "Memuat tagihan biaya lainnya..."
+                        : paymentBillsError
+                          ? "Tagihan biaya lainnya gagal dimuat. Tutup lalu coba lagi."
+                          : "Semua tagihan biaya lainnya sudah lunas."}
+                    </p>
                   )}
-                  <small className="field-hint">
-                    {selectedCost?.type === "Cicilan"
-                      ? `Sisa tagihan ${money(remainingCost)}.`
-                      : "Pembayaran dicatat sebagai pelunasan pos biaya terpilih."}
-                  </small>
                 </div>
               )}
               <div className="payment-total">
@@ -175,11 +201,17 @@ export function PaymentModal({
                 <strong>
                   {money(
                     payKind === "spp"
-                      ? payMonths.length * selectedSppAmount
+                      ? payMonths.reduce(
+                          (total, month) => total + (sppAmountsByMonth[month] ?? selectedSppAmount),
+                          0,
+                        )
                       : Math.min(payAmount, remainingCost),
                   )}
                 </strong>
               </div>
+              {paymentError && (
+                <div className="payment-bills-error" role="alert">{paymentError}</div>
+              )}
               <div className="modal-actions">
                 <button
                   className="button button-outline"
@@ -187,8 +219,12 @@ export function PaymentModal({
                 >
                   Batal
                 </button>
-                <button className="button button-primary" onClick={savePayment}>
-                  <Check size={16} /> Simpan pembayaran
+                <button
+                  className="button button-primary"
+                  onClick={savePayment}
+                  disabled={paymentBusy || (payKind === "non-spp" && (!selectedCost || remainingCost <= 0))}
+                >
+                  <Check size={16} /> {paymentBusy ? "Menyimpan..." : "Simpan pembayaran"}
                 </button>
               </div>
             </section>

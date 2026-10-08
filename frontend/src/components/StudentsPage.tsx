@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ArrowUpRight, ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import type { Student } from "../types";
 import { money } from "../lib/format";
@@ -22,6 +23,15 @@ export function StudentsPage({
   onPay: (student: Student) => void;
   onAdd: () => void;
 }) {
+  const pageSize = 10;
+  const [studentPage, setStudentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(students.length / pageSize));
+  const currentPage = Math.min(studentPage, totalPages);
+  const visibleStudents = students.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
   return (
     <section className="panel listing-panel">
       <div className="list-toolbar">
@@ -36,7 +46,10 @@ export function StudentsPage({
             <Search size={16} />
             <input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setStudentPage(1);
+              }}
               placeholder="Cari nama atau NIS..."
             />
             <kbd>⌘ K</kbd>
@@ -54,16 +67,16 @@ export function StudentsPage({
               <th>NIS / NISN</th>
               <th>KELAS</th>
               <th>PEMBAYARAN SPP</th>
-              <th>SISA TAGIHAN</th>
+              <th>SISA SEMUA TAGIHAN</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {students.map((student, index) => (
+            {visibleStudents.map((student, index) => (
               <tr key={student.id}>
                 <td>
                   <div className="table-person">
-                    <div className={`student-avatar avatar-${index % 4}`}>
+                    <div className={`student-avatar avatar-${((currentPage - 1) * pageSize + index) % 4}`}>
                       {student.name
                         .split(" ")
                         .slice(0, 2)
@@ -97,8 +110,10 @@ export function StudentsPage({
                 </td>
                 <td className="amount-cell">
                   {money(
-                    (12 - student.paid.length) *
-                      studentSppAmount(student, sppAmounts, classLevels),
+                    (student.sppArrears ??
+                      (12 - student.paid.length) *
+                        studentSppAmount(student, sppAmounts, classLevels)) +
+                      (student.nonSppArrears ?? 0),
                   )}
                 </td>
                 <td>
@@ -123,21 +138,25 @@ export function StudentsPage({
       </div>
       <div className="table-footer">
         <span>
-          Menampilkan <strong>{students.length}</strong> data siswa
+          {students.length === 0
+            ? "Menampilkan 0 data siswa"
+            : <>Menampilkan <strong>{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, students.length)}</strong> dari <strong>{students.length}</strong> data siswa</>}
         </span>
         <div>
           <button
             className="icon-button"
             aria-label="Halaman sebelumnya"
-            disabled
+            disabled={currentPage <= 1}
+            onClick={() => setStudentPage((page) => Math.max(1, page - 1))}
           >
             <ChevronLeft size={17} />
           </button>
-          <button className="page-number">1</button>
+          <span className="page-number" aria-current="page">{currentPage}</span>
           <button
             className="icon-button"
             aria-label="Halaman berikutnya"
-            disabled
+            disabled={currentPage >= totalPages}
+            onClick={() => setStudentPage((page) => Math.min(totalPages, page + 1))}
           >
             <ChevronRight size={17} />
           </button>

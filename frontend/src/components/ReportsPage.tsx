@@ -1,6 +1,9 @@
+import { useState } from "react";
 import {
   ArrowUpRight,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Download,
   FileSpreadsheet,
   Loader2,
@@ -40,6 +43,8 @@ export function ReportsPage({
    */
   busy?: boolean;
 }) {
+  const pageSize = 10;
+  const [reportPage, setReportPage] = useState(1);
   const filteredTransactions = transactions.filter(
     (item) =>
       reportClass === "Semua kelas" ||
@@ -47,6 +52,12 @@ export function ReportsPage({
         (student) =>
           student.name === item.student && student.className === reportClass,
       ),
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredTransactions.length / pageSize));
+  const currentPage = Math.min(reportPage, totalPages);
+  const visibleTransactions = filteredTransactions.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
   );
   const total = filteredTransactions.reduce(
     (sum, item) => sum + item.amount,
@@ -90,7 +101,10 @@ export function ReportsPage({
             <select
               className="filter-select"
               value={reportClass}
-              onChange={(event) => setReportClass(event.target.value)}
+              onChange={(event) => {
+                setReportClass(event.target.value);
+                setReportPage(1);
+              }}
             >
               <option>Semua kelas</option>
               {classLevels.map((item) => (
@@ -163,7 +177,7 @@ export function ReportsPage({
               </tr>
             </thead>
             <tbody>
-              {filteredTransactions.map((item, index) => (
+              {visibleTransactions.map((item, index) => (
                 <tr key={`${item.id}-${index}`}>
                   <td>
                     <span className="id-cell">{item.id}</span>
@@ -186,10 +200,40 @@ export function ReportsPage({
         </div>
         <div className="table-footer">
           <span>
-            Menampilkan <strong>{filteredTransactions.length}</strong> transaksi
-            terbaru
+            {filteredTransactions.length === 0 ? (
+              "Menampilkan 0 transaksi"
+            ) : (
+              <>
+                Menampilkan{" "}
+                <strong>
+                  {(currentPage - 1) * pageSize + 1}–
+                  {Math.min(currentPage * pageSize, filteredTransactions.length)}
+                </strong>{" "}
+                dari <strong>{filteredTransactions.length}</strong> transaksi
+              </>
+            )}
           </span>
-          <span>Data tersinkron secara real-time</span>
+          <div>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Halaman laporan sebelumnya"
+              disabled={currentPage <= 1}
+              onClick={() => setReportPage((page) => Math.max(1, page - 1))}
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <span className="page-number" aria-current="page">{currentPage}</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Halaman laporan berikutnya"
+              disabled={currentPage >= totalPages}
+              onClick={() => setReportPage((page) => Math.min(totalPages, page + 1))}
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
         </div>
       </section>
     </>
