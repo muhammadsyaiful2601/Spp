@@ -1091,6 +1091,7 @@ function App() {
           academicYearLabel: academicYear,
           printedTime: new Date().toLocaleString("id-ID"),
           logoDataUrl,
+          user: currentUser ?? { name: "Petugas Keuangan", role: "admin" },
         });
         setToast(`Laporan ${student.name} dibuka untuk dicetak.`);
       } catch {
@@ -1115,6 +1116,7 @@ function App() {
         academicYearLabel: academicYear,
         mode: "download",
         printWindow,
+        user: currentUser ?? { name: "Petugas Keuangan", role: "admin" },
       });
       setToast(
         `Laporan ${student.name} berhasil diunduh.`,

@@ -30,6 +30,15 @@ function compactAddress(address: string): string {
     .join(", ");
 }
 
+function placeFromAddress(address: string): string {
+  const parts = compactAddress(address)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const last = parts.at(-1) ?? "";
+  return last && !/^[-–—\s.]*$/.test(last) ? last : "............";
+}
+
 export function printStudentReportPage({
   printWindow,
   school,
@@ -38,6 +47,7 @@ export function printStudentReportPage({
   academicYearLabel,
   printedTime,
   logoDataUrl,
+  user,
 }: {
   printWindow: Window;
   school: Profile;
@@ -45,8 +55,10 @@ export function printStudentReportPage({
   transactions: Transaction[];
   academicYearLabel: string;
   printedTime: string;
-  /** Data URL logo sekolah (base64). Jika tidak diberikan, fallback ke inisial. */
+  /** Data URL logo sekolah (base64). Jika tidak diberikan, fallback ke logo profil. */
   logoDataUrl?: string | null;
+  /** Penanda tangan laporan; memengaruhi label jabatan pada blok tanda tangan. */
+  user?: { name: string; role: "pimpinan" | "admin" } | null;
 }): void {
   const totalPaid = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
   const sppArrears = student.sppArrears ?? 0;
@@ -75,6 +87,14 @@ export function printStudentReportPage({
     school.phone.trim() && `Telp. ${school.phone.trim()}`,
     school.email.trim() && `Email: ${school.email.trim()}`,
   ].filter(Boolean).map(escapeHtml).join(" · ");
+  const roleLabel = user?.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan";
+  const signerName = user?.name?.trim() ?? "";
+  const place = placeFromAddress(school.address);
+  const signDate = new Date().toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 
   printWindow.opener = null;
   printWindow.focus();
@@ -103,11 +123,16 @@ export function printStudentReportPage({
           .amount { text-align: right; white-space: nowrap; }
           .empty { padding: 16px; text-align: center; color: #68736a; }
           .printed { margin-top: 22px; text-align: right; color: #68736a; font-size: 10px; }
+          .signature { margin: 34px 0 0 auto; width: 260px; font-size: 12px; color: #202820; }
+          .signature p { margin: 0 0 2px; }
+          .signature-space { height: 56px; }
+          .signature-name { font-weight: 700; text-decoration: underline; }
           @media print {
             body { padding: 0; font-size: 11px; }
             header { break-inside: avoid; }
             h2 { break-after: avoid; }
             tr { break-inside: avoid; }
+            .signature { break-inside: avoid; }
           }
         </style>
       </head>
@@ -148,10 +173,42 @@ export function printStudentReportPage({
             <tbody>${historyRows}</tbody>
             <tfoot><tr><th colspan="4" class="amount">Total pembayaran</th><th class="amount">${escapeHtml(rupiah(totalPaid))}</th><th></th></tr></tfoot>
           </table>
+          <div class="signature">
+            <p>${escapeHtml(place)}, ${escapeHtml(signDate)}</p>
+            <p>${escapeHtml(roleLabel)}</p>
+            <div class="signature-space"></div>
+            <p class="signature-name">${escapeHtml(signerName || "\u00a0")}</p>
+            <p>NIP. ..............................</p>
+          </div>
           <p class="printed">Dicetak: ${escapeHtml(printedTime)}</p>
         </main>
       </body>
     </html>`);
   printWindow.document.close();
-  printWindow.print();
+
+  const printWhenReady = (): void => {
+    const images = Array.from(printWindow.document.images);
+    const waitForImage = (image: HTMLImageElement): Promise<void> => {
+      if (typeof image.decode === "function") {
+        return image.decode().catch(() => undefined);
+      }
+      return new Promise<void>((resolve) => {
+        if (image.complete) {
+          resolve();
+          return;
+        }
+        image.addEventListener("load", () => resolve(), { once: true });
+        image.addEventListener("error", () => resolve(), { once: true });
+      });
+    };
+
+    void Promise.all(images.map(waitForImage)).then(() => {
+      window.setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+      }, 100);
+    });
+  };
+
+  printWhenReady();
 }
