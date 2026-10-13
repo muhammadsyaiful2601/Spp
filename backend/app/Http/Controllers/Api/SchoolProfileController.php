@@ -8,7 +8,7 @@ use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
+
 
 class SchoolProfileController extends Controller
 {
@@ -66,22 +66,9 @@ class SchoolProfileController extends Controller
             'bank_account_number.regex' => 'Nomor rekening hanya boleh berisi angka.',
         ]);
 
-        // A receipt is only useful if the whole account is present, so the three
-        // fields are all-or-nothing: naming a bank without a number would print
-        // a payment instruction nobody can act on.
-        $provided = collect(['bank_name', 'bank_account_number', 'bank_account_holder'])
-            ->filter(fn (string $field) => filled($data[$field] ?? null));
-        if ($provided->isNotEmpty() && $provided->count() < 3) {
-            $missing = collect([
-                'bank_name' => 'Nama bank',
-                'bank_account_number' => 'Nomor rekening',
-                'bank_account_holder' => 'Nama pemilik rekening (A.N.)',
-            ])->reject(fn (string $label, string $field) => $provided->has($field))->values();
-
-            throw ValidationException::withMessages([
-                'bank_account_number' => 'Lengkapi '.implode(' dan ', $missing->all()).' untuk menyimpan rekening bank.',
-            ]);
-        }
+        // The account number is the part a payer acts on, so it may be saved on
+        // its own; the bank name and holder are printed as "-" until leadership
+        // fills them in rather than blocking the number from being saved.
 
         $profile = $this->profile();
         $profile->fill($data)->save();

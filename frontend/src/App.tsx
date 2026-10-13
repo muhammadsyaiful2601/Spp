@@ -62,6 +62,7 @@ import {
   createPosition,
   deleteProfilePhoto,
   deletePosition,
+  deleteTreasurer,
   fetchPositionRates,
   fetchSppPeriods,
   forgotPassword,
@@ -74,7 +75,10 @@ import {
   payNonSpp,
   paySpp,
   paymentErrorMessage,
+  updatePaymentTransaction,
   verifyEmailCode,
+  type StudentTransaction,
+  type UpdatePaymentInput,
 } from "./api";
 import "./login.css";
 import type { Notice, Page, Student, Transaction } from "./types";
@@ -115,6 +119,8 @@ import SidebarScrim from "./components/SidebarScrim";
 import PaymentModal from "./components/PaymentModal";
 import StudentModal from "./components/StudentModal";
 import ReceiptModal from "./components/ReceiptModal";
+import PaymentEditModal from "./components/PaymentEditModal";
+import type { PaymentEditContext } from "./components/PaymentEditModal";
 import Toast from "./components/Toast";
 
 
@@ -232,6 +238,11 @@ function App() {
   const [paymentError, setPaymentError] = useState("");
   const [receiptTransaction, setReceiptTransaction] =
     useState<Transaction | null>(null);
+  const [editTransaction, setEditTransaction] = useState<StudentTransaction | null>(null);
+  const [editPaymentStudentId, setEditPaymentStudentId] = useState<number | undefined>(undefined);
+  const [editPaymentContext, setEditPaymentContext] = useState<PaymentEditContext | null>(null);
+  const [editPaymentBusy, setEditPaymentBusy] = useState(false);
+  const [editPaymentError, setEditPaymentError] = useState("");
   const [faviconBusy, setFaviconBusy] = useState(false);
   const [themeBusy, setThemeBusy] = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
@@ -856,6 +867,12 @@ const sppPeriodsQuery = useQuery({
         ? `Akun ${treasurer.name} diaktifkan kembali.`
         : `Akun ${treasurer.name} dinonaktifkan.`;
     });
+
+  const removeTreasurer = (treasurer: Treasurer) =>
+    void runTreasurerAction(async () => {
+      await deleteTreasurer(treasurer.id);
+      return `Akun ${treasurer.name} berhasil dihapus.`;
+    });
   // The stored cost name may no longer exist once positions load, so resolve it
   // to a valid entry during render rather than syncing it in an effect.
   const activeCost =
@@ -972,7 +989,10 @@ const sppPeriodsQuery = useQuery({
           label: "MENU UTAMA",
           links: [
             { id: "dashboard" as Page, text: "Ringkasan", icon: LayoutDashboard },
-            ...(currentUser?.role === "admin"
+            // Students and payments are shared with leadership: pimpinan needs the
+            // same per-student view as the treasurer to supervise the books, so the
+            // menu is shown to both roles rather than admin only.
+            ...(currentUser?.role === "admin" || currentUser?.role === "pimpinan"
               ? [
                   { id: "siswa" as Page, text: "Data siswa", icon: Users },
                   { id: "pembayaran" as Page, text: "Pembayaran", icon: HandCoins },
@@ -1143,6 +1163,52 @@ const sppPeriodsQuery = useQuery({
       setPaymentBusy(false);
     }
   }
+
+  /** Open the correction form for one mis-keyed payment. */
+  function openEditPayment(
+    transaction: StudentTransaction,
+    studentDbId: number,
+    context: PaymentEditContext,
+  ) {
+    setEditTransaction(transaction);
+    setEditPaymentStudentId(studentDbId);
+    setEditPaymentContext(context);
+    setEditPaymentError("");
+  }
+
+  /**
+   * Save a correction and refresh everything the old figure touched.
+   *
+   * The portal feed, the student's bills and the history row are separate
+   * caches; leaving any of them stale would show the corrected payment on one
+   * screen and the wrong one on another.
+   */
+  async function saveEditPayment(input: UpdatePaymentInput) {
+    if (!editTransaction || editPaymentBusy) return;
+
+    const transactionNumber = editTransaction.number;
+    const studentId = editPaymentStudentId;
+
+    setEditPaymentBusy(true);
+    setEditPaymentError("");
+    try {
+      await updatePaymentTransaction(transactionNumber, input);
+      setEditTransaction(null);
+      setToast(`Pembayaran ${transactionNumber} berhasil dikoreksi.`);
+      void queryClient.invalidateQueries({ queryKey: ["portal-data"] });
+      if (studentId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: ["student-transactions", studentId] });
+        void queryClient.invalidateQueries({ queryKey: ["student-bills", studentId] });
+      }
+    } catch (error) {
+      setEditPaymentError(
+        paymentErrorMessage(error, "Koreksi pembayaran gagal disimpan. Silakan coba kembali."),
+      );
+    } finally {
+      setEditPaymentBusy(false);
+    }
+  }
+
   async function exportReport(
     format: "csv" | "xlsx" | "pdf" | "print",
     reportTransactions?: Transaction[],
@@ -2122,7 +2188,6 @@ async function handlePhotoUpload(file: File) {
               onReport={(student, mode, printWindow) =>
                 void exportStudentReport(student, mode, printWindow)
               }
-              onAdd={() => setModal("student")}
               reportBusy={pdfLoading}
             />
           )}
@@ -2134,6 +2199,7 @@ async function handlePhotoUpload(file: File) {
               search={search}
               setSearch={setSearch}
               onPay={openPayment}
+              onEditPayment={openEditPayment}
               academicYears={academicYears}
               selectedYearId={effectiveYearId}
               onSelectYear={selectYear}
@@ -2203,6 +2269,7 @@ async function handlePhotoUpload(file: File) {
               onUpdate={editTreasurer}
               onResetPassword={changeTreasurerPassword}
               onToggleActive={toggleTreasurer}
+              onDelete={removeTreasurer}
             />
           )}
           {effectivePage === "log" && (
@@ -2292,7 +2359,9 @@ async function handlePhotoUpload(file: File) {
           )}
         </section>
         <footer className="footer">
-          <span>© 2026 {profile.school}</span>
+          <span>
+            © 2026 {profile.school} · Muhammad Syaiful
+          </span>
           <span>
             <ShieldCheck size={13} /> Data tersimpan dengan aman
           </span>
@@ -2340,10 +2409,24 @@ async function handlePhotoUpload(file: File) {
           setModal={setModal}
           profile={profile}
           receiptTransaction={receiptTransaction}
-          receiptClassName={students.find(
+          receiptStudent={students.find(
             (student) => student.name === receiptTransaction.student,
-          )?.className}
+          )}
+          receiptClassName={receiptTransaction.className}
           currentUser={currentUser}
+        />
+      )}
+      {editTransaction && editPaymentContext && (
+        <PaymentEditModal
+          transaction={editTransaction}
+          context={editPaymentContext}
+          busy={editPaymentBusy}
+          error={editPaymentError}
+          onSave={(input) => void saveEditPayment(input)}
+          onClose={() => {
+            setEditTransaction(null);
+            setEditPaymentError("");
+          }}
         />
       )}
       {idleWarningMs !== null && (

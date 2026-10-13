@@ -63,6 +63,7 @@ Route::prefix('v1')->group(function () {
                 Route::put('/bendahara/{treasurer}', [TreasurerController::class, 'update'])->whereNumber('treasurer');
                 Route::post('/bendahara/{treasurer}/password', [TreasurerController::class, 'resetPassword'])->whereNumber('treasurer');
                 Route::post('/bendahara/{treasurer}/status', [TreasurerController::class, 'setActive'])->whereNumber('treasurer');
+                Route::delete('/bendahara/{treasurer}', [TreasurerController::class, 'destroy'])->whereNumber('treasurer');
                 // Audit trail. Read-only by design: the log has no write route.
                 Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);
                 Route::get('/backup-database', [MaintenanceController::class, 'backup'])
@@ -87,12 +88,19 @@ Route::prefix('v1')->group(function () {
                 Route::delete('/pos-biaya/{position}', [PricingController::class, 'deletePosition'])->whereNumber('position');
             });
 
-            Route::prefix('admin')->middleware('role:admin')->group(function () {
+            // Students, their per-student bills, payments and receipts are shared
+            // with leadership. The gate stays on the historical `/admin` prefix so
+            // already-deployed bundles keep working, but it is deliberately wider
+            // than the name suggests: leadership needs the same per-student view to
+            // supervise the treasurer, so `pimpinan` gets the full set too.
+            Route::prefix('admin')->middleware('role:pimpinan,admin')->group(function () {
                 Route::get('/siswa', [StudentController::class, 'index']);
                 Route::post('/siswa', [StudentController::class, 'store']);
                 Route::get('/siswa/{student}/tagihan', [StudentController::class, 'bills']);
+                Route::get('/siswa/{student}/transaksi', [PaymentController::class, 'transactions'])->whereNumber('student');
                 Route::post('/pembayaran/spp', [PaymentController::class, 'paySpp']);
                 Route::post('/pembayaran/non-spp', [PaymentController::class, 'payNonSpp']);
+                Route::patch('/transaksi/{transactionNumber}', [PaymentController::class, 'update']);
                 Route::get('/transaksi/{transactionNumber}/cetak-kuitansi', [PaymentController::class, 'receipt']);
             });
 

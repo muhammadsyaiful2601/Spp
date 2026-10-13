@@ -748,7 +748,7 @@ class SchoolPaymentApiTest extends TestCase
             ->assertJsonPath('data.bank_account_holder', 'Yayasan Al-Falah');
     }
 
-    public function test_a_partial_bank_account_is_rejected(): void
+    public function test_a_bank_account_number_can_be_saved_without_the_other_parts(): void
     {
         $this->seed();
         $token = $this->postJson('/api/v1/auth/login', [
@@ -756,17 +756,18 @@ class SchoolPaymentApiTest extends TestCase
             'password' => 'password',
         ])->assertOk()->json('data.token');
 
-        // A bank with no number would print a payment instruction that nobody
-        // can act on, so the three fields only save together.
+        // The number is the part a payer acts on, so leadership can save it on
+        // its own and the receipt prints it straight away.
         $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
             'school_name' => 'SDIT Al-Falah',
             'address' => 'Jl. Pendidikan No. 1, Bogor',
             'receipt_template' => 'standard',
-            'bank_name' => 'Bank Syariah Indonesia',
-        ])->assertUnprocessable()->assertJsonValidationErrors('bank_account_number');
+            'bank_account_number' => '0071234567',
+        ])->assertOk()
+            ->assertJsonPath('data.bank_account_number', '0071234567');
 
-        $this->assertDatabaseMissing('school_profiles', [
-            'bank_name' => 'Bank Syariah Indonesia',
+        $this->assertDatabaseHas('school_profiles', [
+            'bank_account_number' => '0071234567',
         ]);
     }
 
@@ -884,6 +885,39 @@ class SchoolPaymentApiTest extends TestCase
         $this->withToken($token)->getJson('/api/v1/admin/siswa')->assertOk();
     }
 
+    public function test_leadership_can_view_the_same_per_student_data_as_the_treasurer(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+
+        $studentId = $this->makeStudent('2401099', '0199999999', 1, 0);
+
+        // Leadership gets the identical student list the treasurer sees.
+        $this->withToken($token)->getJson('/api/v1/admin/siswa')
+            ->assertOk()
+            ->assertJsonFragment(['full_name' => "Siswa 2401099"]);
+
+        // And the same per-student bill breakdown (SPP + non-SPP).
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        $this->withToken($token)->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
+            ->assertOk()
+            ->assertJsonStructure(['data' => ['spp', 'non_spp']]);
+
+        // A receipt is part of the per-student view too, so leadership can print it.
+        // Month 7 is still outstanding (makeStudent above paid nothing), so the
+        // payment is accepted and returns the transaction to fetch the receipt for.
+        $payment = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/spp', [
+            'student_id' => $studentId,
+            'academic_year_id' => $yearId,
+            'months' => [7],
+        ])->assertCreated();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/admin/transaksi/'.$payment->json('data.transaction_number').'/cetak-kuitansi')
+            ->assertOk()
+            ->assertJsonPath('data.transaction.type', 'spp');
+    }
+
     public function test_admin_cannot_upload_or_remove_school_branding_files(): void
     {
         Storage::fake('public');
@@ -969,6 +1003,232 @@ class SchoolPaymentApiTest extends TestCase
             'amount_paid' => 1500000,
             'status' => 'lunas',
         ]);
+    }
+
+    public function test_a_student_payment_history_lists_recorded_payments_for_the_year(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $studentId = $this->makeStudent('2402001', '0128456800', 1, 6);
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+        $levelId = DB::table('class_levels')->where('sort_order', 1)->value('id');
+        $rate = DB::table('position_rates')
+            ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+            ->where('payment_positions.name', 'Uang Pembangunan')
+            ->where('position_rates.class_level_id', $levelId)
+            ->value('position_rates.id');
+
+        $number = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/non-spp', [
+            'student_id' => $studentId,
+            'position_rate_id' => $rate,
+            'amount' => 400000,
+        ])->assertCreated()->json('data.transaction_number');
+
+        $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/transaksi?academic_year_id={$yearId}")
+            ->assertOk()
+            ->assertJsonPath('data.0.number', $number)
+            ->assertJsonPath('data.0.amount', 400000)
+            ->assertJsonPath('data.0.type', 'non_spp');
+    }
+
+    public function test_leadership_can_correct_a_non_spp_amount_and_the_bill_follows(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $studentId = $this->makeStudent('2402002', '0128456801', 1, 6);
+        $levelId = DB::table('class_levels')->where('sort_order', 1)->value('id');
+        $rate = DB::table('position_rates')
+            ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+            ->where('payment_positions.name', 'Uang Pembangunan')
+            ->where('position_rates.class_level_id', $levelId)
+            ->value('position_rates.id');
+
+        $number = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/non-spp', [
+            'student_id' => $studentId,
+            'position_rate_id' => $rate,
+            'amount' => 400000,
+        ])->assertCreated()->json('data.transaction_number');
+
+        // The receipt was 400k too high: correcting it has to move the bill too,
+        // or the arrears figure would keep counting money that never arrived.
+        $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$number}", [
+            'amount' => 350000,
+        ])->assertOk()->assertJsonPath('data.amount', 350000);
+
+        $bill = DB::table('non_spp_bills')->where('student_id', $studentId)->where('position_rate_id', $rate)->first();
+        $this->assertSame(350000.0, (float) $bill->amount_paid);
+        $this->assertSame('sebagian', $bill->status);
+
+        $this->assertDatabaseHas('payment_transactions', [
+            'transaction_number' => $number,
+            'amount' => 350000,
+        ]);
+        $this->assertDatabaseHas('activity_logs', ['action' => 'pembayaran.koreksi']);
+    }
+
+    public function test_a_correction_beyond_the_remaining_balance_is_rejected(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $studentId = $this->makeStudent('2402003', '0128456802', 1, 6);
+        $levelId = DB::table('class_levels')->where('sort_order', 1)->value('id');
+        $rate = DB::table('position_rates')
+            ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
+            ->where('payment_positions.name', 'Uang Pembangunan')
+            ->where('position_rates.class_level_id', $levelId)
+            ->value('position_rates.id');
+
+        $number = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/non-spp', [
+            'student_id' => $studentId,
+            'position_rate_id' => $rate,
+            'amount' => 400000,
+        ])->assertCreated()->json('data.transaction_number');
+
+        $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$number}", [
+            'amount' => 9000000,
+        ])->assertUnprocessable();
+
+        $this->assertDatabaseHas('payment_transactions', [
+            'transaction_number' => $number,
+            'amount' => 400000,
+        ]);
+    }
+
+    public function test_an_spp_amount_cannot_be_typed_but_its_date_can_be_corrected(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $studentId = $this->makeStudent('2402004', '0128456803', 1, 6);
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $number = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/spp', [
+            'student_id' => $studentId,
+            'academic_year_id' => $yearId,
+            'months' => [3],
+        ])->assertCreated()->json('data.transaction_number');
+        $before = (float) DB::table('payment_transactions')->where('transaction_number', $number)->value('amount');
+
+        // The amount is the sum of the months it settled, so only the date is
+        // something a treasurer can get wrong by hand.
+        $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$number}", [
+            'amount' => 1,
+        ])->assertUnprocessable();
+
+        $correctedDate = now()->subDays(3)->startOfHour()->toDateTimeString();
+        $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$number}", [
+            'paid_at' => $correctedDate,
+        ])->assertOk();
+
+        $after = DB::table('payment_transactions')->where('transaction_number', $number)->first();
+        $this->assertSame($before, (float) $after->amount);
+        $this->assertSame(
+            now()->parse($correctedDate)->format('Y-m-d H:i:s'),
+            now()->parse($after->paid_at)->format('Y-m-d H:i:s'),
+        );
+
+        $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$number}", [
+            'paid_at' => now()->addWeek()->toDateTimeString(),
+        ])->assertUnprocessable()->assertJsonValidationErrors('paid_at');
+    }
+
+    public function test_an_spp_payment_can_be_moved_to_another_month(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $studentId = $this->makeStudent('2402005', '0128456804', 1, 6);
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $number = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/spp', [
+            'student_id' => $studentId,
+            'academic_year_id' => $yearId,
+            'months' => [3],
+        ])->assertCreated()->json('data.transaction_number');
+        $wrongMonthBill = DB::table('spp_bills')
+            ->where('student_id', $studentId)
+            ->where('academic_year_id', $yearId)
+            ->where('month', 3)
+            ->first();
+        $rightBillAmount = (float) DB::table('spp_bills')
+            ->where('student_id', $studentId)
+            ->where('academic_year_id', $yearId)
+            ->where('month', 5)
+            ->value('amount');
+
+        // March was picked by mistake: the correction has to move the payment to
+        // May, hand March back as an unpaid bill, and restate the amount.
+        $corrected = $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$number}", [
+            'months' => [5],
+        ])->assertOk()->json('data');
+
+        $this->assertSame($rightBillAmount, (float) $corrected['amount']);
+        $this->assertSame([5], array_map('intval', json_decode($corrected['details'], true)['months']));
+
+        $this->assertDatabaseHas('spp_bills', [
+            'id' => $wrongMonthBill->id,
+            'status' => 'belum_bayar',
+            'paid_at' => null,
+        ]);
+        $this->assertDatabaseHas('spp_bills', [
+            'id' => DB::table('spp_bills')
+                ->where('student_id', $studentId)
+                ->where('academic_year_id', $yearId)
+                ->where('month', 5)
+                ->value('id'),
+            'status' => 'lunas',
+        ]);
+
+        $bills = $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
+            ->assertOk();
+        $lunasMonths = collect($bills->json('data.spp'))
+            ->filter(fn ($bill) => $bill['status'] === 'lunas')
+            ->pluck('month')
+            ->map(fn ($month) => (int) $month)
+            ->all();
+        // The fixture already settles Jul..Dec, so the move is March out, May in.
+        $this->assertContains(5, $lunasMonths);
+        $this->assertNotContains(3, $lunasMonths);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/transaksi?academic_year_id={$yearId}")
+            ->assertOk()
+            ->assertJsonPath('data.0.months', [5]);
+    }
+
+    public function test_an_spp_correction_cannot_take_a_month_settled_by_another_payment(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $studentId = $this->makeStudent('2402006', '0128456805', 1, 6);
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $first = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/spp', [
+            'student_id' => $studentId,
+            'academic_year_id' => $yearId,
+            'months' => [3],
+        ])->assertCreated()->json('data.transaction_number');
+        $second = $this->withToken($token)->postJson('/api/v1/admin/pembayaran/spp', [
+            'student_id' => $studentId,
+            'academic_year_id' => $yearId,
+            'months' => [4],
+        ])->assertCreated()->json('data.transaction_number');
+
+        // March is already someone else's receipt; stealing it would leave the
+        // first payment settled on a month it no longer covers.
+        $this->withToken($token)->patchJson("/api/v1/admin/transaksi/{$second}", [
+            'months' => [3, 4],
+        ])->assertUnprocessable();
+
+        $this->assertDatabaseHas('payment_transactions', [
+            'transaction_number' => $first,
+            'amount' => DB::table('payment_transactions')->where('transaction_number', $first)->value('amount'),
+        ]);
+        $details = json_decode(
+            DB::table('payment_transactions')->where('transaction_number', $second)->value('details'),
+            true,
+        );
+        $this->assertSame([4], array_map('intval', $details['months']));
     }
 
     public function test_spp_period_rejects_incomplete_semester_ranges_even_when_months_are_strings(): void
@@ -1391,6 +1651,37 @@ class SchoolPaymentApiTest extends TestCase
             ->assertOk();
     }
 
+    public function test_logout_ends_every_session_of_the_account(): void
+    {
+        $this->seed();
+        $user = User::where('username', 'pimpinan')->firstOrFail();
+
+        // The same account signed in on two devices.
+        $token = $this->tokenFor('pimpinan');
+        $user->createToken('device-lain');
+        $this->assertSame(2, DB::table('personal_access_tokens')
+            ->where('tokenable_id', $user->getKey())->count());
+
+        // Signing out on one device must drop *all* of the account's tokens, so a
+        // shared machine never leaves a live session behind for the next user.
+        $this->withToken($token)->postJson('/api/v1/auth/logout')->assertOk();
+
+        $this->assertSame(0, DB::table('personal_access_tokens')
+            ->where('tokenable_id', $user->getKey())->count());
+
+        // The sign-out is still attributed to the right account in the audit log.
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'akun.keluar',
+            'category' => 'akun',
+            'actor_username' => 'pimpinan',
+        ]);
+
+        // And a fresh sign-in succeeds immediately afterwards — no refresh needed.
+        $this->postJson('/api/v1/auth/login', ['username' => 'pimpinan', 'password' => 'password'])
+            ->assertOk()
+            ->assertJsonStructure(['data' => ['token']]);
+    }
+
     public function test_a_suspended_treasurer_cannot_log_in(): void
     {
         // Separate test so the login endpoint is only called once in this scope.
@@ -1430,6 +1721,90 @@ class SchoolPaymentApiTest extends TestCase
         $this->withToken($token)->postJson("/api/v1/pimpinan/bendahara/{$second}/status", [
             'is_active' => false,
         ])->assertStatus(422);
+    }
+
+    public function test_a_treasurer_without_payments_can_be_deleted_outright(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $id = $this->makeTreasurer('bendahara7');
+
+        // The session row is inserted directly: a second `login` call inside one
+        // test swaps the session guard, which is not what is being asserted.
+        DB::table('personal_access_tokens')->insert([
+            'tokenable_type' => (new User)->getMorphClass(),
+            'tokenable_id' => $id,
+            'name' => 'test',
+            'token' => hash('sha256', 'bendahara7-token'),
+            'abilities' => '["*"]',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $rows = $this->withToken($token)
+            ->getJson('/api/v1/pimpinan/bendahara')
+            ->assertOk()
+            ->json('data');
+        $row = collect($rows)->firstWhere('id', $id);
+        $this->assertTrue($row['can_delete']);
+        $this->assertNull($row['delete_blocked_reason']);
+
+        $this->withToken($token)
+            ->deleteJson("/api/v1/pimpinan/bendahara/{$id}")
+            ->assertOk();
+
+        $this->assertDatabaseMissing('users', ['id' => $id]);
+        // Deleting has to take the sessions with it, or the token would outlive
+        // the account it was issued to.
+        $this->assertSame(0, DB::table('personal_access_tokens')->where('tokenable_id', $id)->count());
+        $this->assertDatabaseHas('activity_logs', ['action' => 'bendahara.hapus']);
+    }
+
+    public function test_a_treasurer_who_recorded_payments_cannot_be_deleted(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $treasurerId = $this->makeTreasurer('bendahara8');
+
+        DB::table('payment_transactions')->insert([
+            'transaction_number' => 'NSP-TES-000001',
+            'student_id' => $this->makeStudent('2403001', '0128456900', 1, 6),
+            'user_id' => $treasurerId,
+            'type' => 'non_spp',
+            'amount' => 100000,
+            'paid_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Deleting would strip the recorded name off real money, so the account
+        // can only be suspended.
+        $this->withToken($token)
+            ->deleteJson("/api/v1/pimpinan/bendahara/{$treasurerId}")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('username');
+
+        $this->assertDatabaseHas('users', ['id' => $treasurerId]);
+
+        $rows = $this->withToken($token)->getJson('/api/v1/pimpinan/bendahara')->assertOk()->json('data');
+        $row = collect($rows)->firstWhere('id', $treasurerId);
+        $this->assertFalse($row['can_delete']);
+        $this->assertStringContainsString('Nonaktifkan', (string) $row['delete_blocked_reason']);
+    }
+
+    public function test_the_last_active_treasurer_cannot_be_deleted(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $soleId = (int) DB::table('users')->where('username', 'admin')->value('id');
+
+        // Removing the only treasurer would leave nobody able to record a payment.
+        $this->withToken($token)
+            ->deleteJson("/api/v1/pimpinan/bendahara/{$soleId}")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('username');
+
+        $this->assertDatabaseHas('users', ['id' => $soleId]);
     }
 
     public function test_treasurer_management_is_restricted_to_leadership(): void

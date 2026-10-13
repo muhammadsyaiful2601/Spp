@@ -21,11 +21,21 @@ function rupiah(amount: number): string {
   }).format(amount);
 }
 
+function titleCaseWords(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toLocaleUpperCase("id-ID") + word.slice(1))
+    .join(" ");
+}
+
 function compactAddress(address: string): string {
   return address
     .split(/[\n\r]+/)
     .flatMap((line) => line.split(","))
-    .map((part) => part.trim())
+    .map((part) => titleCaseWords(part.trim()))
     .filter(Boolean)
     .join(", ");
 }
@@ -78,10 +88,21 @@ export function printStudentReportPage({
   // Gunakan logoDataUrl (base64) agar logo bisa tampil di window print baru
   // tanpa bergantung pada CORS atau session cookie.
   const resolvedLogoSrc = logoDataUrl ?? school.logo;
+  // Kop sekolah sama persis dengan laporan pembayaran sekolah: logo di kiri,
+  // teks_instansi terpusat, dan kotak hijau berisi inisial bila logo kosong.
+  const institutionName = (school.foundation.trim() || school.school.trim()).toLocaleUpperCase(
+    "id-ID",
+  );
+  const initials = institutionName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("");
   const logo = resolvedLogoSrc
     ? `<img class="logo" src="${escapeHtml(resolvedLogoSrc)}" alt="Logo sekolah">`
-    : "";
-  
+    : `<div class="logo logo-fallback">${escapeHtml(initials || "SD")}</div>`;
+
   const address = compactAddress(school.address);
   const contact = [
     school.phone.trim() && `Telp. ${school.phone.trim()}`,
@@ -131,10 +152,11 @@ export function printStudentReportPage({
           * { box-sizing: border-box; }
           body { margin: 0; padding: 28px; color: #202820; font: 13px Arial, sans-serif; }
           main { max-width: 900px; margin: 0 auto; }
-          header { display: flex; align-items: center; gap: 18px; padding-bottom: 14px; border-bottom: 3px double #26392c; }
-          .logo { width: 72px; height: 72px; object-fit: contain; }
+          header { display: flex; align-items: center; gap: 14px; padding-bottom: 12px; border-bottom: 3px double #26392c; }
+          .logo { width: 72px; height: 72px; object-fit: contain; flex: 0 0 auto; }
+          .logo-fallback { display: flex; align-items: center; justify-content: center; background: #24634e; color: #fff; font-size: 26px; font-weight: 700; border-radius: 6px; }
           .school { flex: 1; text-align: center; }
-          h1 { margin: 0 0 6px; font-size: 20px; }
+          h1 { margin: 0 0 6px; font-size: 20px; text-transform: uppercase; }
           .school p { margin: 3px 0; color: #475249; font-size: 11px; }
           h2 { margin: 24px 0 9px; font-size: 14px; }
           .report-title { margin: 20px 0 4px; text-align: center; font-size: 18px; }
@@ -167,11 +189,10 @@ export function printStudentReportPage({
           <header>
             ${logo}
             <div class="school">
-              <h1>${escapeHtml(school.foundation.trim() || school.school.trim())}</h1>
-              <p>${escapeHtml(address)}</p>
-              <p>${contact}</p>
+              <h1>${escapeHtml(institutionName)}</h1>
+              ${address ? `<p>Alamat: ${escapeHtml(address)}</p>` : ""}
+              ${contact ? `<p>${contact}</p>` : ""}
             </div>
-            ${logo}
           </header>
           <h2 class="report-title">LAPORAN PEMBAYARAN SISWA</h2>
           <p class="year">Tahun Ajaran ${escapeHtml(academicYearLabel)}</p>

@@ -385,10 +385,10 @@ export function ProfilePage({
           </div>
           <p className="bank-account-hint">
             {bankFieldsFilled === 0
-              ? "Isi ketiga kolom ini bila pembayaran dilakukan lewat transfer bank."
-              : bankFieldsFilled < 3
-                ? "Lengkapi ketiga kolom — rekening tersimpan sebagai satu kesatuan."
-                : "Rekening ini tampil di kuitansi dan seluruh laporan."}
+              ? "Isi kolom rekening bila pembayaran dilakukan lewat transfer bank."
+              : profile.bankAccountNumber.trim()
+                ? "Nomor rekening ini langsung tampil di kuitansi dan seluruh laporan."
+                : "Isi nomor rekening agar payers punya tujuan transfer yang jelas."}
           </p>
         </div>
         <div className="profile-actions">
@@ -445,6 +445,17 @@ export function ProfilePage({
             <span>Total</span>
             <strong>Rp 350.000</strong>
           </div>
+          {(profile.bankName.trim() || profile.bankAccountNumber.trim() || profile.bankAccountHolder.trim()) && (
+            <div className="mini-receipt-bank">
+              <span>
+                {profile.bankName.trim() || "Rekening pembayaran"}
+                {profile.bankAccountNumber.trim() ? ` · ${profile.bankAccountNumber.trim()}` : ""}
+              </span>
+              {profile.bankAccountHolder.trim() && (
+                <small>A.N. {profile.bankAccountHolder.trim()}</small>
+              )}
+            </div>
+          )}
           <p>{profile.note}</p>
         </div>
         <div className="profile-hint">

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, CircleDollarSign, Plus, ReceiptText, Search, ShieldCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleDollarSign, Loader2, PencilLine, Plus, ReceiptText, Search, ShieldCheck } from "lucide-react";
 import type { Student } from "../types";
-import type { AcademicYear } from "../api";
+import type { AcademicYear, StudentTransaction } from "../api";
 import { money } from "../lib/format";
 import { studentSppAmount } from "../lib/students";
 import { monthNames } from "../constants";
-import { fetchStudentBills } from "../api";
+import { fetchStudentBills, fetchStudentTransactions } from "../api";
+import type { PaymentEditContext } from "./PaymentEditModal";
 
 
 
@@ -17,6 +18,7 @@ export function PaymentPage({
   search,
   setSearch,
   onPay,
+  onEditPayment,
   academicYears,
   selectedYearId,
   onSelectYear,
@@ -27,6 +29,11 @@ export function PaymentPage({
   search: string;
   setSearch: (value: string) => void;
   onPay: (student: Student, kind?: "spp" | "non-spp") => void;
+  onEditPayment: (
+    transaction: StudentTransaction,
+    studentDbId: number,
+    context: PaymentEditContext,
+  ) => void;
   academicYears: AcademicYear[];
   selectedYearId: number | null;
   onSelectYear: (yearId: number) => void;
@@ -47,6 +54,11 @@ export function PaymentPage({
   const billsQuery = useQuery({
     queryKey: ["student-bills", selectedStudent?.dbId, selectedYearId],
     queryFn: () => fetchStudentBills(selectedStudent!.dbId!, selectedYearId),
+    enabled: selectedStudent?.dbId !== undefined,
+  });
+  const transactionsQuery = useQuery({
+    queryKey: ["student-transactions", selectedStudent?.dbId, selectedYearId],
+    queryFn: () => fetchStudentTransactions(selectedStudent!.dbId!, selectedYearId),
     enabled: selectedStudent?.dbId !== undefined,
   });
   const sppBills = billsQuery.data?.spp;
@@ -70,6 +82,15 @@ export function PaymentPage({
   const hasUnpaidNonSpp = billsQuery.data?.non_spp.some(
     (bill) => Number(bill.amount_due) > Number(bill.amount_paid),
   ) ?? false;
+  // Correction context for one payment: months another payment already settled
+  // are locked, and the per-month tariff matches the bills so the running total
+  // in the form is the amount the server will store.
+  const editContextFor = (transaction: StudentTransaction): PaymentEditContext => ({
+    lockedMonths: (sppBills ?? [])
+      .filter((bill) => bill.status === "lunas" && !transaction.months.includes(bill.month))
+      .map((bill) => bill.month),
+    monthlyAmounts: monthNames.map((_month, index) => monthlyAmount(index)),
+  });
 
   return (
     <div className="payment-layout">
@@ -246,6 +267,44 @@ export function PaymentPage({
           ) : (
             <p className="historical-cost-empty">
               {billsQuery.isLoading ? "Memuat tagihan biaya lain..." : "Belum ada tagihan biaya lain pada tahun ajaran ini."}
+            </p>
+          )}
+          <h3 className="subsection-title">
+            Riwayat pembayaran <span>{year?.name ?? "Tahun ajaran aktif"}</span>
+          </h3>
+          {transactionsQuery.isError ? (
+            <div className="payment-bills-error" role="alert">
+              Riwayat pembayaran gagal dimuat. Silakan coba lagi.
+              <button type="button" onClick={() => void transactionsQuery.refetch()}>Muat ulang</button>
+            </div>
+          ) : transactionsQuery.isLoading ? (
+            <p className="historical-cost-empty">
+              <Loader2 size={14} className="spin" /> Memuat riwayat pembayaran...
+            </p>
+          ) : transactionsQuery.data?.length ? (
+            <div className="transaction-history">
+              {transactionsQuery.data.map((item) => (
+                <div className="transaction-history-row" key={item.id}>
+                  <span>
+                    <strong>{item.detail}</strong>
+                    <small>{item.number} · {item.date}</small>
+                  </span>
+                  <strong>{money(item.amount)}</strong>
+                  <button
+                    type="button"
+                    className="icon-button row-action"
+                    title={`Koreksi pembayaran ${item.number}`}
+                    aria-label={`Koreksi pembayaran ${item.number}`}
+                    onClick={() => onEditPayment(item, selectedStudent.dbId!, editContextFor(item))}
+                  >
+                    <PencilLine size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="historical-cost-empty">
+              Belum ada pembayaran tercatat untuk siswa ini pada tahun ajaran terpilih.
             </p>
           )}
           <div className="billing-note">

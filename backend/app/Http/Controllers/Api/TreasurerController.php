@@ -30,15 +30,33 @@ class TreasurerController extends Controller
             ->where('role', 'admin')
             ->orderByDesc('is_active')
             ->orderBy('name')
-            ->get()
-            ->map(fn (User $user) => $this->present($user) + [
-                'last_login_at' => DB::table('personal_access_tokens')
-                    ->where('tokenable_id', $user->id)
-                    ->where('tokenable_type', $user->getMorphClass())
-                    ->max('last_used_at'),
-            ]);
+            ->get();
 
-        return response()->json(['data' => $treasurers]);
+        // One flag for the whole roster, so the delete button can explain
+        // itself instead of failing after the click.
+        $activeTreasurers = User::query()
+            ->where('role', 'admin')
+            ->where('is_active', true)
+            ->count();
+
+        return response()->json(['data' => $treasurers->map(function (User $treasurer) use ($activeTreasurers) {
+            $transactions = $this->transactionsCount($treasurer);
+            $lastActive = $activeTreasurers <= 1 && $treasurer->is_active;
+
+            return $this->present($treasurer) + [
+                'last_login_at' => DB::table('personal_access_tokens')
+                    ->where('tokenable_id', $treasurer->id)
+                    ->where('tokenable_type', $treasurer->getMorphClass())
+                    ->max('last_used_at'),
+                'transactions_count' => $transactions,
+                'can_delete' => $transactions === 0 && ! $lastActive,
+                'delete_blocked_reason' => match (true) {
+                    $lastActive => 'Satu-satunya bendahara aktif. Buat akun lain sebelum menghapus ini.',
+                    $transactions > 0 => "Mencatat {$transactions} pembayaran. Nonaktifkan saja agar riwayat tetap utuh.",
+                    default => null,
+                },
+            ];
+        })]);
     }
 
     /** Create a treasurer account with an initial password. */
@@ -210,12 +228,71 @@ class TreasurerController extends Controller
     }
 
     /**
+     * Delete a treasurer account outright.
+     *
+     * Suspension is the reversible option and is preferred for anyone who has
+     * already worked here. Deletion is only offered to an account that never
+     * recorded a payment, because `payment_transactions.user_id` restricts
+     * deletion: dropping the row would either break that foreign key or strip
+     * the name off money that was genuinely received.
+     */
+    public function destroy(Request $request, User $treasurer): JsonResponse
+    {
+        $this->guardEditable($treasurer);
+
+        $transactions = $this->transactionsCount($treasurer);
+        if ($transactions > 0) {
+            throw ValidationException::withMessages([
+                'username' => ["Akun ini tercatat pada {$transactions} pembayaran dan tidak dapat dihapus. Nonaktifkan saja agar riwayat pembayaran tetap utuh."],
+            ]);
+        }
+
+        $remainingActive = User::query()
+            ->where('role', 'admin')
+            ->where('is_active', true)
+            ->where('id', '!=', $treasurer->id)
+            ->count();
+
+        // Removing the only treasurer would leave nobody able to record a
+        // payment, which is the same lockout the suspend guard prevents.
+        if ($treasurer->is_active && $remainingActive === 0) {
+            throw ValidationException::withMessages([
+                'username' => ['Minimal harus ada satu bendahara aktif. Buat akun lain sebelum menghapus ini.'],
+            ]);
+        }
+
+        $label = "{$treasurer->name} ({$treasurer->username})";
+        $this->revokeTokens($treasurer);
+        $treasurer->delete();
+
+        ActivityLogger::record(
+            'bendahara.hapus',
+            'bendahara',
+            "Menghapus akun bendahara {$label} yang belum pernah mencatat pembayaran.",
+            [
+                'subject_type' => 'user',
+                'subject_id' => $treasurer->id,
+                'subject_label' => $label,
+                'meta' => ['username' => $treasurer->username],
+            ],
+        );
+
+        return response()->json(['message' => "Akun bendahara {$treasurer->name} berhasil dihapus."]);
+    }
+
+    /**
      * Reject anything that is not a treasurer. Route model binding would happily
      * resolve a `pimpinan` user, which must never be editable from this screen.
      */
     private function guardEditable(User $treasurer): void
     {
         abort_if($treasurer->role !== 'admin', 404, 'Akun bendahara tidak ditemukan.');
+    }
+
+    /** How much money history is tied to this account. */
+    private function transactionsCount(User $user): int
+    {
+        return DB::table('payment_transactions')->where('user_id', $user->id)->count();
     }
 
     /** Drop every bearer token so the account must sign in again. */

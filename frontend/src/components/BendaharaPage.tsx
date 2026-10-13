@@ -7,6 +7,7 @@ import {
   Search,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   UserPlus,
   Users,
   X,
@@ -59,18 +60,20 @@ function passwordScore(value: string): number {
 
 const STRENGTH_LABEL = ["Sangat lemah", "Lemah", "Cukup", "Kuat", "Sangat kuat"];
 
-/** Which dialog is open; `confirm` guards the destructive suspend action. */
+/** Which dialog is open; `confirm` guards the destructive actions. */
 type Dialog =
   | { kind: "none" }
   | { kind: "create" }
   | { kind: "edit"; treasurer: Treasurer }
   | { kind: "password"; treasurer: Treasurer }
-  | { kind: "confirm"; treasurer: Treasurer; next: boolean };
+  | { kind: "confirm"; treasurer: Treasurer; next: boolean }
+  | { kind: "delete"; treasurer: Treasurer };
 export function BendaharaPage({
   busy,
   error,
   loading,
   onCreate,
+  onDelete,
   onResetPassword,
   onToggleActive,
   onUpdate,
@@ -80,6 +83,7 @@ export function BendaharaPage({
   error: string;
   loading: boolean;
   onCreate: (input: TreasurerForm) => void;
+  onDelete: (treasurer: Treasurer) => void;
   onResetPassword: (treasurer: Treasurer, password: string) => void;
   onToggleActive: (treasurer: Treasurer, next: boolean) => void;
   onUpdate: (
@@ -139,6 +143,12 @@ export function BendaharaPage({
   const confirmToggle = () => {
     if (dialog.kind !== "confirm") return;
     onToggleActive(dialog.treasurer, dialog.next);
+    close();
+  };
+
+  const confirmDelete = () => {
+    if (dialog.kind !== "delete") return;
+    onDelete(dialog.treasurer);
     close();
   };
 
@@ -356,6 +366,17 @@ export function BendaharaPage({
                     ) : (
                       <ShieldCheck size={15} />
                     )}
+                  </button>
+                  <button
+                    type="button"
+                    className={`icon-button is-danger ${treasurer.can_delete ? "" : "is-locked"}`}
+                    title={
+                      treasurer.delete_blocked_reason ?? "Hapus akun bendahara"
+                    }
+                    disabled={!treasurer.can_delete}
+                    onClick={() => setDialog({ kind: "delete", treasurer })}
+                  >
+                    <Trash2 size={15} />
                   </button>
                 </div>
               </article>
@@ -649,6 +670,51 @@ export function BendaharaPage({
                   <ShieldOff size={16} />
                 )}
                 {dialog.next ? "Aktifkan" : "Nonaktifkan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog.kind === "delete" && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) close();
+          }}
+        >
+          <div className="modal" role="alertdialog" aria-modal="true">
+            <div className="modal-head">
+              <div>
+                <div className="eyebrow">HAPUS AKUN</div>
+                <h2>{dialog.treasurer.name}</h2>
+              </div>
+              <button type="button" className="icon-button" aria-label="Tutup" onClick={close}>
+                <X size={19} />
+              </button>
+            </div>
+            <p className="modal-note">
+              Akun <strong>@{dialog.treasurer.username}</strong> akan dihapus permanen dan
+              tidak dapat dipulihkan. Gunakan <strong>Nonaktifkan</strong> bila hanya ingin
+              menutup akses sementara.
+            </p>
+            <ul className="delete-warning">
+              <li>Semua sesi aktif akun ini langsung dicabut.</li>
+              <li>Akun tidak akan bisa masuk lagi ke portal keuangan.</li>
+              <li>Akun yang pernah mencatat pembayaran tidak dapat dihapus — nonaktifkan saja.</li>
+            </ul>
+            <div className="modal-actions">
+              <button type="button" className="button button-outline" onClick={close}>
+                Batal
+              </button>
+              <button
+                type="button"
+                className="button button-danger"
+                onClick={confirmDelete}
+                disabled={busy || !dialog.treasurer.can_delete}
+              >
+                {busy ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
+                Hapus permanen
               </button>
             </div>
           </div>

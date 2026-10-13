@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Plus,
   Printer,
   Search,
 } from "lucide-react";
@@ -22,7 +21,6 @@ export function StudentsPage({
   setSearch,
   onPay,
   onReport,
-  onAdd,
   reportBusy,
 }: {
   students: Student[];
@@ -36,7 +34,6 @@ export function StudentsPage({
     mode: "download" | "print",
     printWindow?: Window | null,
   ) => void;
-  onAdd: () => void;
   reportBusy: boolean;
 }) {
   const pageSize = 10;
@@ -70,9 +67,6 @@ export function StudentsPage({
             />
             <kbd>⌘ K</kbd>
           </label>
-          <button className="button button-primary compact-add" onClick={onAdd}>
-            <Plus size={16} /> Tambah siswa
-          </button>
         </div>
       </div>
       <div className="table-wrap">

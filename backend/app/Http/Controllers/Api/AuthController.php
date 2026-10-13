@@ -62,7 +62,14 @@ class AuthController extends Controller
 
         ActivityLogger::record('akun.masuk', 'akun', 'Masuk ke portal.');
 
-        $this->sendLoginAlert($request, $user);
+        // The "was this you?" notice is an SMTP round-trip to the relay, sent
+        // synchronously because this deployment has no queue worker. Doing it
+        // inline stalled the login response long enough to trip the browser's
+        // request timeout, so a correct sign-in came back as "Server tidak dapat
+        // dihubungi" and forced a page refresh. Deferred, the token is returned
+        // immediately and the email follows once the response is already on its
+        // way — a slow or unreachable relay can no longer break the sign-in.
+        defer(fn () => $this->sendLoginAlert($request, $user));
 
         return response()->json(['data' => ['user' => $user, 'token' => $token, 'token_type' => 'Bearer']]);
     }
@@ -70,10 +77,19 @@ class AuthController extends Controller
     public function logout(Request $request): JsonResponse
     {
         $user = $request->user();
-        $user->currentAccessToken()?->delete();
 
-        // The actor is passed explicitly: the token was just dropped, so nothing
-        // should depend on the guard still resolving the user.
+        // End *every* session of this account, not just the tab that pressed
+        // "Keluar". On a shared office machine the same account is often open in
+        // several tabs; leaving the other tokens alive meant a live token from
+        // the previous user could still shadow the next person who signed in.
+        // Mirrors changePassword and the emailed "end all sessions" link.
+        DB::table('personal_access_tokens')
+            ->where('tokenable_id', $user->getKey())
+            ->where('tokenable_type', $user->getMorphClass())
+            ->delete();
+
+        // The actor is passed explicitly: the tokens are gone, so nothing should
+        // depend on the guard still resolving the user from a deleted token.
         ActivityLogger::record('akun.keluar', 'akun', 'Keluar dari portal.', ['actor' => $user]);
 
         return response()->json(['message' => 'Berhasil keluar.']);

@@ -264,6 +264,56 @@ export async function payNonSpp(input: {
   return data.data
 }
 
+/** One recorded payment, as the correction screen shows it. */
+export type StudentTransaction = {
+  id: number
+  number: string
+  type: "spp" | "non_spp"
+  detail: string
+  /** Calendar months (1..12) an SPP payment settled; empty for other fees. */
+  months: number[]
+  amount: number
+  status: string
+  paid_at: string
+  date: string
+}
+
+/**
+ * The correction payload.
+ *
+ * Every field is optional so a treasurer can fix just the date, just the
+ * amount, or just the months. The server rejects an amount change on an SPP
+ * payment — that figure follows the months — so the client only has to omit it.
+ */
+export type UpdatePaymentInput = {
+  amount?: number
+  paid_at?: string
+  months?: number[]
+}
+
+export async function fetchStudentTransactions(
+  studentId: number,
+  academicYearId?: number | null,
+): Promise<StudentTransaction[]> {
+  const params = academicYearId ? { academic_year_id: academicYearId } : undefined
+  const { data } = await api.get<{ data: StudentTransaction[] }>(
+    `/admin/siswa/${studentId}/transaksi`,
+    { params },
+  )
+  return data.data
+}
+
+export async function updatePaymentTransaction(
+  transactionNumber: string,
+  input: UpdatePaymentInput,
+): Promise<SavedPayment> {
+  const { data } = await api.patch<{ data: SavedPayment }>(
+    `/admin/transaksi/${transactionNumber}`,
+    input,
+  )
+  return data.data
+}
+
 /** Client-side guard mirroring the server's `image` + 2 MB rule. */
 export function validatePhotoFile(file: File): string | null {
   const allowed = ["image/png", "image/jpeg", "image/webp"]
@@ -337,7 +387,16 @@ export function validationMessage(error: unknown, field: string): string | null 
   return Array.isArray(list) && list.length > 0 ? String(list[0]) : null
 }
 
-export function paymentErrorMessage(error: unknown): string {
+/**
+ * Message for a failed payment write.
+ *
+ * `fallback` exists because the same server error shape is reused for
+ * corrections, where saying "pembayaran belum tersimpan" would be misleading.
+ */
+export function paymentErrorMessage(
+  error: unknown,
+  fallback = "Pembayaran gagal disimpan. Silakan coba kembali.",
+): string {
   if (axios.isAxiosError(error)) {
     const errors = (error.response?.data as { errors?: Record<string, string[]> } | undefined)?.errors
     for (const messages of Object.values(errors ?? {})) {
@@ -345,9 +404,9 @@ export function paymentErrorMessage(error: unknown): string {
     }
     const message = (error.response?.data as { message?: string } | undefined)?.message
     if (message) return message
-    if (!error.response) return "Server tidak dapat dihubungi. Pembayaran belum tersimpan."
+    if (!error.response) return "Server tidak dapat dihubungi. Perubahan belum tersimpan."
   }
-  return "Pembayaran gagal disimpan. Silakan coba kembali."
+  return fallback
 }
 
 /**
@@ -709,6 +768,12 @@ export type Treasurer = {
   /** Storage-relative avatar path, or null when the treasurer has no photo. */
   photo_path: string | null
   last_login_at: string | null
+  /** Payments this account recorded; a non-zero count blocks deletion. */
+  transactions_count: number
+  /** Server-decided: false when deleting would orphan payment history. */
+  can_delete: boolean
+  /** Why the delete button is disabled, in words, or null when it is allowed. */
+  delete_blocked_reason: string | null
 }
 
 export type CreateTreasurerInput = {
@@ -753,6 +818,16 @@ export async function setTreasurerActive(id: number, isActive: boolean): Promise
     is_active: isActive,
   })
   return data.data
+}
+
+/**
+ * Delete a treasurer outright.
+ *
+ * Only for accounts that never recorded a payment — the server enforces it, so
+ * a caller that ignores `can_delete` gets a 422 rather than broken history.
+ */
+export async function deleteTreasurer(id: number): Promise<void> {
+  await api.delete(`/pimpinan/bendahara/${id}`)
 }
 
 export type SppPeriod = {
