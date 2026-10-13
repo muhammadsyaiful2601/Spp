@@ -415,6 +415,14 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 .footer { display: flex; justify-content: space-between; padding: 15px 39px 19px; border-top: 1px solid #e9ece8; color: #a1aaa3; font-size: 8px; }
 .footer > span:last-child { display: flex; align-items: center; gap: 5px; }.footer svg { color: #75a184; }
 .listing-panel { overflow: hidden; }
+.report-section-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 11px 14px; border-bottom: 1px solid #eef1ee; background: #f8faf7; }
+.report-section-label { color: #536158; font-size: 9px; font-weight: 700; }
+.report-section-option { display: flex; align-items: center; gap: 6px; color: #6d7b71; font-size: 9px; cursor: pointer; }
+.report-section-option input { width: 13px; height: 13px; accent-color: #24634e; cursor: pointer; }
+.report-section-all { margin-left: auto; padding: 4px 9px; color: #5d6f63; font-size: 8px; background: transparent; border: 1px solid #d8e2d7; border-radius: 5px; cursor: pointer; }
+.report-section-all:hover:not(:disabled) { background: #eef3ee; }
+.report-section-all:disabled { opacity: .45; cursor: default; }
+.table-empty { padding: 26px 12px; color: #7d8981; text-align: center; font-size: 9px; }
 .list-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 17px 19px 15px; }
 .list-toolbar h2 { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .count-badge { display: grid; place-items: center; min-width: 19px; height: 18px; padding: 0 5px; border-radius: 4px; color: #467757; background: #edf5ee; font: 600 9px 'DM Sans', sans-serif; }
@@ -491,6 +499,14 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 .profile-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(235px, .75fr); align-items: start; gap: 14px; }.profile-form { padding: 19px; }.profile-form > .panel-heading { align-items: flex-start; }.profile-form > .panel-heading > svg { color: #75927d; }.logo-field { display: flex; align-items: center; gap: 12px; padding: 15px 0; margin: 15px 0; border-block: 1px solid #eef1ee; }.logo-preview { width: 56px; height: 56px; display: grid; place-items: center; overflow: hidden; color: #4c8060; background: #edf4ee; border: 1px dashed #cddbcf; border-radius: 8px; }.logo-preview img { width: 100%; height: 100%; object-fit: cover; }.logo-field > div:last-child { display: grid; justify-items: start; gap: 5px; }.logo-field strong { color: #536158; font-size: 9px; }.logo-field span { color: #9aa39c; font-size: 8px; }.upload-button { position: relative; height: 27px; margin-top: 3px; padding: 0 8px; font-size: 8px; }.upload-button input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 .favicon-field { display: flex; align-items: center; gap: 12px; padding: 0 0 15px; margin-bottom: 15px; border-bottom: 1px solid #eef1ee; }.favicon-preview { width: 32px; height: 32px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; color: #4c8060; background: #edf4ee; border: 1px dashed #cddbcf; border-radius: 6px; }.favicon-preview img { width: 18px; height: 18px; object-fit: contain; }.favicon-detail { min-width: 0; display: grid; justify-items: start; gap: 5px; }.favicon-detail strong { color: #536158; font-size: 9px; }.favicon-detail > span { color: #9aa39c; font-size: 8px; }.favicon-actions { display: flex; align-items: center; gap: 6px; margin-top: 3px; }.favicon-actions .button { height: 27px; font-size: 8px; }.favicon-actions .upload-button { margin-top: 0; }.favicon-tab { min-width: 0; max-width: 155px; display: flex; align-items: center; gap: 6px; padding: 5px 9px; margin-left: auto; color: #97a29a; background: #f6f8f5; border: 1px solid #e7ebe6; border-radius: 5px; }.favicon-tab-icon { width: 13px; height: 13px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; color: #9fb0a4; }.favicon-tab-icon img { width: 13px; height: 13px; object-fit: contain; }.favicon-tab-text { min-width: 0; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .theme-field { padding: 15px; margin-bottom: 15px; background: var(--brand-tint); border: 1px solid var(--brand-border); border-radius: 8px; }
+.bank-account-block { padding: 14px 15px 13px; margin-bottom: 15px; background: #f8faf7; border: 1px solid #e6ebe4; border-radius: 8px; }
+.bank-account-head { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 11px; }
+.bank-account-head > svg { flex: 0 0 auto; color: var(--brand-ink); }
+.bank-account-head > div { display: grid; gap: 3px; }
+.bank-account-head strong { color: var(--brand-ink); font-size: 10px; font-weight: 700; }
+.bank-account-head span { max-width: 420px; color: #7c8a81; font-size: 8px; line-height: 1.5; }
+.bank-account-block .form-grid { margin: 0; }
+.bank-account-hint { margin: 9px 0 0; color: #7c8a81; font-size: 8px; line-height: 1.5; }
 .theme-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .theme-head > div { display: grid; gap: 3px; }
 .theme-head strong { color: var(--brand-ink); font-size: 10px; font-weight: 700; }
@@ -631,6 +647,11 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 .receipt-total span { color: #c6d8cb; font-size: 10px; }
 .receipt-total strong { color: #fff; font: 800 19px 'Manrope', sans-serif; text-align: right; overflow-wrap: anywhere; }
 .receipt-note { margin: 13px 2px 0; color: #78867c; text-align: left; font-size: 9px; line-height: 1.55; }
+.receipt-bank { display: grid; gap: 4px; margin: 13px 2px 0; padding: 11px 12px; color: #5d6f63; background: #f2f6f2; border: 1px solid #e3ebe2; border-radius: 7px; }
+.receipt-bank-label { color: #7c8c81; font-size: 8px; line-height: 1.5; }
+.receipt-bank-row { display: flex; justify-content: space-between; gap: 12px; font-size: 9px; }
+.receipt-bank-row > span { color: #84948a; }
+.receipt-bank-row strong { color: #33493b; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
 .receipt-signature { grid-template-columns: 1fr 1fr; align-items: end; justify-items: stretch; gap: 20px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #e9eeea; }
 .receipt-signature-copy { display: grid; justify-items: start; gap: 4px; min-width: 0; }
 .receipt-signature-copy span, .receipt-signature-copy small { color: #87938a; font-size: 8px; }

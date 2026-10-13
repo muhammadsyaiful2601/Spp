@@ -235,6 +235,7 @@ class TreasurerController extends Controller
             'name' => $user->name,
             'username' => $user->username,
             'email' => $user->email,
+            'nip' => $user->nip,
             'role' => $user->role,
             'is_active' => (bool) $user->is_active,
             'created_at' => $user->created_at?->toDateTimeString(),

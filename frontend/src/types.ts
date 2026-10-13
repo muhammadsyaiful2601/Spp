@@ -35,6 +35,10 @@ export type Transaction = {
   date: string;
   amount: number;
   status: string;
+  /** ISO timestamp of when the payment was recorded; drives the month filter. */
+  paidAt?: string;
+  /** Present on report rows, which join the student's class. */
+  className?: string;
 };
 
 export type Profile = {
@@ -48,6 +52,10 @@ export type Profile = {
   favicon: string;
   themePrimary: string;
   themeAccent: string;
+  /** Fixed bank account printed on receipts and reports (never a VA). */
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountHolder: string;
 };
 
 export type NoticeTone = "amber" | "green" | "blue" | "coral";

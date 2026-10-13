@@ -45,6 +45,9 @@ export const initialProfile: Profile = {
   favicon: "",
   themePrimary: "#24634e",
   themeAccent: "#c88942",
+  bankName: "",
+  bankAccountNumber: "",
+  bankAccountHolder: "",
 };
 
 export const initialSppRates: number[] = [];

@@ -84,6 +84,195 @@ class SchoolPaymentApiTest extends TestCase
         return $studentId;
     }
 
+    // --- Reports -------------------------------------------------------------
+
+    /**
+     * The report must return every matching payment, not a recent slice.
+     *
+     * The portal payload is deliberately capped at 100 transactions because the
+     * dashboard only renders a short recent list. Reports are documents, so
+     * they read the full history: a year of SPP is well past 100 rows, and a
+     * report that quietly showed only the newest 100 would total less than the
+     * dashboard it is supposed to explain.
+     */
+    public function test_payment_report_is_not_capped_like_the_portal_feed(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $yearId = (int) DB::table('academic_years')->where('is_active', true)->value('id');
+
+        // 12 students x 12 paid months = 144 payments, comfortably over the 100
+        // rows the portal feed is allowed to return.
+        for ($i = 0; $i < 12; $i++) {
+            $studentId = $this->makeStudent('24'.str_pad((string) $i, 4, '0', STR_PAD_LEFT), '10000'.$i, 1, 12);
+            $billIds = DB::table('spp_bills')->where('student_id', $studentId)
+                ->pluck('id')->all();
+            DB::table('payment_transactions')->insert(array_map(fn ($billId) => [
+                'transaction_number' => 'REP-'.$billId,
+                'student_id' => $studentId,
+                'user_id' => DB::table('users')->where('username', 'admin')->value('id'),
+                'type' => 'spp',
+                'reference_id' => $billId,
+                'details' => json_encode(['bill_ids' => [$billId], 'months' => [7]]),
+                'amount' => 10000,
+                'paid_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ], $billIds));
+        }
+
+        $portalCount = count($this->withToken($token)->getJson('/api/v1/data/portal')
+            ->assertOk()->json('data.transactions'));
+        $report = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}")
+            ->assertOk();
+
+        $this->assertSame(144, $report->json('meta.count'));
+        $this->assertCount(144, $report->json('data'));
+        $this->assertFalse($report->json('meta.truncated'));
+
+        // The cap is real but belongs to the dashboard feed only; the report is
+        // the artefact that has to stay complete.
+        $this->assertSame(100, $portalCount);
+    }
+
+    /** A report and the dashboard it explains must total the same money. */
+    public function test_payment_report_total_matches_the_dashboard_summary(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+        $yearId = (int) DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $studentId = $this->makeStudent('2401999', '9876543210', 2, 4);
+        $billIds = DB::table('spp_bills')->where('student_id', $studentId)
+            ->where('status', 'lunas')->pluck('id')->all();
+        DB::table('payment_transactions')->insert(array_map(fn ($billId) => [
+            'transaction_number' => 'SUM-'.$billId,
+            'student_id' => $studentId,
+            'user_id' => DB::table('users')->where('username', 'admin')->value('id'),
+            'type' => 'spp',
+            'reference_id' => $billId,
+            'details' => json_encode(['bill_ids' => [$billId], 'months' => [7]]),
+            'amount' => 25000,
+            'paid_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], $billIds));
+
+        $reportRows = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}")
+            ->assertOk()->json('data');
+
+        $reportTotal = array_sum(array_column($reportRows, 'amount'));
+        $dashboardTotal = $this->withToken($token)
+            ->getJson("/api/v1/reports/dashboard-stats?academic_year_id={$yearId}")
+            ->assertOk()->json('data.total_received');
+
+        $this->assertSame((float) $dashboardTotal, (float) $reportTotal);
+    }
+
+    /** Class and month filters narrow the report; month is a calendar month. */
+    public function test_payment_report_filters_by_class_and_month(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $yearId = (int) DB::table('academic_years')->where('is_active', true)->value('id');
+        $levelId = (int) DB::table('class_levels')->where('sort_order', 3)->value('id');
+
+        $studentId = $this->makeStudent('2401777', '1122334455', 3, 2);
+        $billIds = DB::table('spp_bills')->where('student_id', $studentId)
+            ->where('status', 'lunas')->pluck('id')->all();
+        DB::table('payment_transactions')->insert(array_map(fn ($billId, $index) => [
+            'transaction_number' => 'FLT-'.$billId,
+            'student_id' => $studentId,
+            'user_id' => DB::table('users')->where('username', 'admin')->value('id'),
+            'type' => 'spp',
+            'reference_id' => $billId,
+            'details' => json_encode(['bill_ids' => [$billId], 'months' => [7]]),
+            'amount' => 10000,
+            // First payment in July, second in October.
+            'paid_at' => $index === 0 ? now()->setMonth(7) : now()->setMonth(10),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], $billIds, array_keys($billIds)));
+
+        $all = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}")
+            ->assertOk()->json('data');
+        $this->assertCount(2, $all);
+
+        $byClass = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}&class_level_id={$levelId}")
+            ->assertOk()->json('data');
+        $this->assertCount(2, $byClass);
+
+        $otherLevel = (int) DB::table('class_levels')->where('sort_order', 5)->value('id');
+        $empty = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}&class_level_id={$otherLevel}")
+            ->assertOk()->json('data');
+        $this->assertCount(0, $empty);
+
+        $october = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}&month=10")
+            ->assertOk()->json('data');
+        $this->assertCount(1, $october);
+        $this->assertSame(10, (int) now()->setMonth(10)->format('n'));
+    }
+
+    /** A single student's report carries that student's whole history. */
+    public function test_payment_report_can_be_scoped_to_one_student(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $yearId = (int) DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $mine = $this->makeStudent('2401555', '5566778899', 4, 3);
+        $other = $this->makeStudent('2401666', '6677889900', 4, 3);
+
+        foreach ([$mine, $other] as $studentId) {
+            $billIds = DB::table('spp_bills')->where('student_id', $studentId)
+                ->where('status', 'lunas')->pluck('id')->all();
+            DB::table('payment_transactions')->insert(array_map(fn ($billId) => [
+                'transaction_number' => 'ONE-'.$billId,
+                'student_id' => $studentId,
+                'user_id' => DB::table('users')->where('username', 'admin')->value('id'),
+                'type' => 'spp',
+                'reference_id' => $billId,
+                'details' => json_encode(['bill_ids' => [$billId], 'months' => [7]]),
+                'amount' => 10000,
+                'paid_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ], $billIds));
+        }
+
+        $rows = $this->withToken($token)
+            ->getJson("/api/v1/reports/pembayaran?academic_year_id={$yearId}&student_id={$mine}")
+            ->assertOk()->json('data');
+
+        $this->assertCount(3, $rows);
+        $this->assertSame([$mine], array_values(array_unique(array_column($rows, 'student_id'))));
+    }
+
+    public function test_payment_report_validates_its_filters(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+
+        $this->withToken($token)->getJson('/api/v1/reports/pembayaran?month=13')
+            ->assertUnprocessable()->assertJsonValidationErrors('month');
+        $this->withToken($token)->getJson('/api/v1/reports/pembayaran?academic_year_id=999999')
+            ->assertUnprocessable()->assertJsonValidationErrors('academic_year_id');
+    }
+
+    /** The report is financial data: it must never answer an anonymous caller. */
+    public function test_payment_report_requires_authentication(): void
+    {
+        $this->seed();
+
+        $this->getJson('/api/v1/reports/pembayaran')->assertUnauthorized();
+    }
+
     public function test_admin_can_pay_multiple_spp_months_and_retrieve_receipt(): void
     {
         $this->seed();
@@ -524,6 +713,79 @@ class SchoolPaymentApiTest extends TestCase
             'action' => 'profil_sekolah.ubah',
             'category' => 'profil_sekolah',
         ]);
+    }
+
+    public function test_leadership_can_save_the_bank_account_and_it_reaches_receipts(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'pimpinan',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'school_name' => 'SDIT Al-Falah',
+            'address' => 'Jl. Pendidikan No. 1, Bogor',
+            'receipt_template' => 'standard',
+            'bank_name' => 'Bank Syariah Indonesia',
+            'bank_account_number' => '0071234567',
+            'bank_account_holder' => 'Yayasan Al-Falah',
+        ])->assertOk()
+            ->assertJsonPath('data.bank_name', 'Bank Syariah Indonesia')
+            ->assertJsonPath('data.bank_account_number', '0071234567')
+            ->assertJsonPath('data.bank_account_holder', 'Yayasan Al-Falah');
+
+        $this->assertDatabaseHas('school_profiles', [
+            'bank_account_number' => '0071234567',
+            'bank_account_holder' => 'Yayasan Al-Falah',
+        ]);
+
+        // Receipts and reports are rendered on the client from the public
+        // payload, so the account has to be part of it.
+        $this->getJson('/api/v1/public/sekolah-profile')->assertOk()
+            ->assertJsonPath('data.bank_name', 'Bank Syariah Indonesia')
+            ->assertJsonPath('data.bank_account_number', '0071234567')
+            ->assertJsonPath('data.bank_account_holder', 'Yayasan Al-Falah');
+    }
+
+    public function test_a_partial_bank_account_is_rejected(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'pimpinan',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        // A bank with no number would print a payment instruction that nobody
+        // can act on, so the three fields only save together.
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'school_name' => 'SDIT Al-Falah',
+            'address' => 'Jl. Pendidikan No. 1, Bogor',
+            'receipt_template' => 'standard',
+            'bank_name' => 'Bank Syariah Indonesia',
+        ])->assertUnprocessable()->assertJsonValidationErrors('bank_account_number');
+
+        $this->assertDatabaseMissing('school_profiles', [
+            'bank_name' => 'Bank Syariah Indonesia',
+        ]);
+    }
+
+    public function test_bank_account_number_rejects_non_digits(): void
+    {
+        $this->seed();
+        $token = $this->postJson('/api/v1/auth/login', [
+            'username' => 'pimpinan',
+            'password' => 'password',
+        ])->assertOk()->json('data.token');
+
+        $this->withToken($token)->postJson('/api/v1/pimpinan/sekolah-profile', [
+            'school_name' => 'SDIT Al-Falah',
+            'address' => 'Jl. Pendidikan No. 1, Bogor',
+            'receipt_template' => 'standard',
+            'bank_name' => 'Bank Syariah Indonesia',
+            'bank_account_number' => '0071-2345-67',
+            'bank_account_holder' => 'Yayasan Al-Falah',
+        ])->assertUnprocessable()->assertJsonValidationErrors('bank_account_number');
     }
 
     public function test_identity_update_requires_a_name_and_an_address(): void
@@ -1428,23 +1690,48 @@ class SchoolPaymentApiTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors('type');
     }
 
-    public function test_admin_cannot_change_tariffs(): void
+public function test_admin_can_change_tariffs(): void
     {
         $this->seed();
         $token = $this->tokenFor('admin');
         $yearId = (int) DB::table('academic_years')->value('id');
         $levelId = (int) DB::table('class_levels')->value('id');
 
+        // The treasurer role records the payments, so it owns the amounts that
+        // produce those bills as well.
         $this->withToken($token)->postJson('/api/v1/pimpinan/tarif-spp', [
             'academic_year_id' => $yearId,
             'rates' => [['class_level_id' => $levelId, 'monthly_amount' => 999000]],
-        ])->assertForbidden();
+        ])->assertOk();
 
         $this->withToken($token)->postJson('/api/v1/pimpinan/pos-biaya', [
             'name' => 'X', 'type' => 'tahunan', 'amount' => 1000, 'academic_year_id' => $yearId,
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('payment_positions', ['name' => 'X']);
+        $this->assertDatabaseHas('spp_periods', [
+            'class_level_id' => $levelId,
+            'monthly_amount' => 999000,
+        ]);
+    }
+
+    public function test_admin_still_cannot_reach_leadership_only_settings(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+
+        // Widening pricing must not leak the rest of the `/pimpinan` prefix:
+        // identity, academic years, treasurer accounts, audit and maintenance
+        // stay leadership-only.
+        $this->withToken($token)->getJson('/api/v1/pimpinan/sekolah-profile')->assertForbidden();
+        $this->withToken($token)->postJson('/api/v1/pimpinan/tahun-ajaran', [
+            'start_year' => 2028, 'end_year' => 2029,
         ])->assertForbidden();
+        $this->withToken($token)->getJson('/api/v1/pimpinan/bendahara')->assertForbidden();
+        $this->withToken($token)->getJson('/api/v1/pimpinan/log-aktivitas')->assertForbidden();
 
         $this->assertDatabaseMissing('payment_positions', ['name' => 'X']);
+        $this->assertDatabaseMissing('academic_years', ['start_year' => 2028]);
     }
 
     public function test_tariff_saving_requires_authentication(): void
@@ -1471,6 +1758,54 @@ class SchoolPaymentApiTest extends TestCase
 
         $this->assertSame('bendahara_baru', $response->json('data.username'));
         $this->assertDatabaseHas('users', ['username' => 'bendahara_baru']);
+    }
+
+    public function test_every_account_can_set_its_own_nip(): void
+    {
+        $this->seed();
+
+        // The NIP is printed in the signature block of receipts and reports, so
+        // it is self-service for the treasurer too, not just for leadership.
+        $token = $this->tokenFor('admin');
+        $response = $this->withToken($token)->postJson('/api/v1/auth/profile', [
+            'name' => 'Admin Keuangan',
+            'username' => 'admin',
+            'email' => 'admin@example.test',
+            'nip' => '19870412 199003 1 001',
+        ])->assertOk();
+
+        $this->assertSame('19870412 199003 1 001', $response->json('data.nip'));
+        $this->assertDatabaseHas('users', [
+            'username' => 'admin',
+            'nip' => '19870412 199003 1 001',
+        ]);
+
+        // `/auth/me` feeds the account screen and the print helpers.
+        $this->withToken($token)->getJson('/api/v1/auth/me')->assertOk()
+            ->assertJsonPath('data.nip', '19870412 199003 1 001');
+    }
+
+    public function test_a_nip_can_be_cleared_but_not_filled_with_rubbish(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+
+        // Blank is legitimate: not every public-school teacher holds one.
+        $this->withToken($token)->postJson('/api/v1/auth/profile', [
+            'name' => 'Admin Keuangan',
+            'username' => 'admin',
+            'email' => 'admin@example.test',
+            'nip' => '',
+        ])->assertOk()->assertJsonPath('data.nip', null);
+
+        // The value is printed verbatim on a document, so characters that would
+        // be ambiguous when read off paper are refused.
+        $this->withToken($token)->postJson('/api/v1/auth/profile', [
+            'name' => 'Admin Keuangan',
+            'username' => 'admin',
+            'email' => 'admin@example.test',
+            'nip' => '1987<script>',
+        ])->assertUnprocessable()->assertJsonValidationErrors('nip');
     }
 
     public function test_a_changed_username_is_the_one_used_to_log_in(): void

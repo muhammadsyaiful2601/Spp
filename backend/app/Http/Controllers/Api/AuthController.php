@@ -99,9 +99,13 @@ class AuthController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'min:3', 'max:100', 'alpha_dash', Rule::unique('users', 'username')->ignore($user->id)],
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            // Printed verbatim on financial documents, so anything that would be
+            // ambiguous when read off paper is rejected rather than trimmed.
+            'nip' => ['nullable', 'string', 'max:40', 'regex:/^[0-9A-Za-z .\/-]*$/'],
         ], [
             'username.alpha_dash' => 'Username hanya boleh huruf, angka, tanda hubung, dan garis bawah.',
             'username.min' => 'Username minimal 3 karakter.',
+            'nip.regex' => 'NIP hanya boleh angka, huruf, titik, spasi, tanda hubung, dan garis miring.',
         ]);
 
         // Compared before saving: `fill()` overwrites the attribute, so the old
@@ -207,6 +211,8 @@ class AuthController extends Controller
             'username' => $user->username,
             'name' => $user->name,
             'email' => $user->email,
+            // Printed in the signature block of every receipt and report.
+            'nip' => $user->nip,
             'role' => $user->role,
             'photo_path' => $user->photo_path,
             // Drives the frontend gate: unverified accounts stay on the profile screen.

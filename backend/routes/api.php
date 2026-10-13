@@ -55,14 +55,6 @@ Route::prefix('v1')->group(function () {
                 Route::post('/sekolah-profile/upload-favicon', [SchoolProfileController::class, 'uploadFavicon']);
                 Route::post('/sekolah-profile/theme', [SchoolProfileController::class, 'updateTheme']);
                 Route::delete('/sekolah-profile/favicon', [SchoolProfileController::class, 'deleteFavicon']);
-                Route::get('/spp-periode', [PricingController::class, 'sppIndex']);
-                Route::post('/spp-periode', [PricingController::class, 'saveSppPeriod']);
-                Route::get('/tarif-spp', [PricingController::class, 'sppIndex']);
-                Route::post('/tarif-spp', [PricingController::class, 'saveSppRates']);
-                Route::get('/tarif-non-spp', [PricingController::class, 'positionRates']);
-                Route::post('/tarif-non-spp', [PricingController::class, 'savePositionRates']);
-                Route::post('/pos-biaya', [PricingController::class, 'storePosition']);
-                Route::delete('/pos-biaya/{position}', [PricingController::class, 'deletePosition'])->whereNumber('position');
                 Route::post('/tahun-ajaran', [AcademicYearController::class, 'store']);
                 Route::post('/tahun-ajaran/{year}/aktifkan', [AcademicYearController::class, 'activate']);
                 Route::get('/bendahara', [TreasurerController::class, 'index']);
@@ -79,6 +71,22 @@ Route::prefix('v1')->group(function () {
                     ->middleware('throttle:5,1');
             });
 
+            // Pricing is shared: `admin` (the treasurer role) records the payments,
+            // so it also owns the amounts that produce those bills. These stay
+            // under the historical `/pimpinan` prefix to keep already-deployed
+            // bundles working, but the gate is deliberately wider than the rest
+            // of that prefix — leadership-only routes stay in the group above.
+            Route::prefix('pimpinan')->middleware('role:pimpinan,admin')->group(function () {
+                Route::get('/spp-periode', [PricingController::class, 'sppIndex']);
+                Route::post('/spp-periode', [PricingController::class, 'saveSppPeriod']);
+                Route::get('/tarif-spp', [PricingController::class, 'sppIndex']);
+                Route::post('/tarif-spp', [PricingController::class, 'saveSppRates']);
+                Route::get('/tarif-non-spp', [PricingController::class, 'positionRates']);
+                Route::post('/tarif-non-spp', [PricingController::class, 'savePositionRates']);
+                Route::post('/pos-biaya', [PricingController::class, 'storePosition']);
+                Route::delete('/pos-biaya/{position}', [PricingController::class, 'deletePosition'])->whereNumber('position');
+            });
+
             Route::prefix('admin')->middleware('role:admin')->group(function () {
                 Route::get('/siswa', [StudentController::class, 'index']);
                 Route::post('/siswa', [StudentController::class, 'store']);
@@ -89,6 +97,7 @@ Route::prefix('v1')->group(function () {
             });
 
             Route::prefix('reports')->middleware('role:pimpinan,admin')->group(function () {
+                Route::get('/pembayaran', [ReportController::class, 'pembayaran']);
                 Route::get('/spp', [ReportController::class, 'spp']);
                 Route::get('/non-spp', [ReportController::class, 'nonSpp']);
                 Route::get('/dashboard-stats', [ReportController::class, 'dashboard']);

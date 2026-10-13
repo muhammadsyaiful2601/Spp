@@ -1,4 +1,4 @@
-import { Building2, Check, ReceiptText, RefreshCw, ShieldCheck, Sparkles, Trash, Upload } from "lucide-react";
+import { Building2, Check, Landmark, ReceiptText, RefreshCw, ShieldCheck, Sparkles, Trash, Upload } from "lucide-react";
 import type { Profile } from "../types";
 import { MosqueMark, StarMotif } from "./icons";
 import { applyTheme, normalizeHex, themePresets } from "../api";
@@ -42,6 +42,13 @@ export function ProfilePage({
   canEditBranding?: boolean;
 }) {
   const activeFavicon = profile.favicon || profile.logo;
+  // The account saves as one unit on the server, so the hint tracks how much of
+  // it the form has rather than letting a partial save fail on submit.
+  const bankFieldsFilled = [
+    profile.bankName,
+    profile.bankAccountNumber,
+    profile.bankAccountHolder,
+  ].filter((value) => value.trim()).length;
   return (
     <div className="profile-layout">
       {verification}
@@ -322,6 +329,67 @@ export function ProfilePage({
               }
             />
           </div>
+        </div>
+        <div className="bank-account-block">
+          <div className="bank-account-head">
+            <Landmark size={17} />
+            <div>
+              <strong>Rekening bank untuk pembayaran</strong>
+              <span>
+                Nomor rekening tetap yang dicetak pada kuitansi dan laporan —
+                bukan virtual account per siswa.
+              </span>
+            </div>
+          </div>
+          <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="profile-bank-name">Nama bank</label>
+              <input
+                id="profile-bank-name"
+                placeholder="Bank Syariah Indonesia"
+                value={profile.bankName}
+                onChange={(event) =>
+                  setProfile((value) => ({ ...value, bankName: event.target.value }))
+                }
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="profile-bank-number">Nomor rekening</label>
+              <input
+                id="profile-bank-number"
+                inputMode="numeric"
+                placeholder="0071234567"
+                value={profile.bankAccountNumber}
+                onChange={(event) =>
+                  setProfile((value) => ({
+                    ...value,
+                    bankAccountNumber: event.target.value.replace(/[^0-9]/g, ""),
+                  }))
+                }
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="profile-bank-holder">Nama pemilik rekening (A.N.)</label>
+              <input
+                id="profile-bank-holder"
+                placeholder="Yayasan Al-Falah"
+                value={profile.bankAccountHolder}
+                onChange={(event) =>
+                  setProfile((value) => ({
+                    ...value,
+                    bankAccountHolder: event.target.value,
+                  }))
+                }
+              />
+            </div>
+          </div>
+          <p className="bank-account-hint">
+            {bankFieldsFilled === 0
+              ? "Isi ketiga kolom ini bila pembayaran dilakukan lewat transfer bank."
+              : bankFieldsFilled < 3
+                ? "Lengkapi ketiga kolom — rekening tersimpan sebagai satu kesatuan."
+                : "Rekening ini tampil di kuitansi dan seluruh laporan."}
+          </p>
         </div>
         <div className="profile-actions">
           <span>

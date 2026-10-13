@@ -10,18 +10,39 @@ import jsPDF from "jspdf";
 export function ReceiptModal({
   profile,
   receiptTransaction,
+  receiptClassName,
   setModal,
   currentUser,
 }: {
   modal: ModalKind;
   profile: Profile;
   receiptTransaction: Transaction;
+  receiptClassName?: string;
   setModal: (value: ModalKind) => void;
   currentUser: AuthUser | null;
 }) {
   const receiptRef = useRef<HTMLDivElement>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  // The account is a fixed bank account (never a per-student VA) and is only
+  // useful as a whole, so it renders when all three parts are on file.
+  const bankAccount =
+    profile.bankName.trim() && profile.bankAccountNumber.trim() && profile.bankAccountHolder.trim()
+      ? {
+          name: profile.bankName.trim(),
+          number: profile.bankAccountNumber.trim(),
+          holder: profile.bankAccountHolder.trim(),
+        }
+      : null;
+  // Captured once when the receipt opens so the printed date cannot drift while
+// the modal sits on screen.
+  const [printedDate] = useState(() =>
+    new Date().toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }),
+  );
 
   async function downloadPDF() {
     const receiptElement = receiptRef.current;
@@ -117,6 +138,12 @@ export function ReceiptModal({
               <span>Nama siswa</span>
               <strong>{receiptTransaction.student}</strong>
             </div>
+            {receiptClassName && (
+              <div className="receipt-line">
+                <span>Kelas</span>
+                <strong>{receiptClassName}</strong>
+              </div>
+            )}
             <div className="receipt-line">
               <span>Rincian pembayaran</span>
               <strong>{receiptTransaction.detail}</strong>
@@ -125,17 +152,41 @@ export function ReceiptModal({
               <span>Tanggal transaksi</span>
               <strong>{receiptTransaction.date}</strong>
             </div>
+            <div className="receipt-line">
+              <span>Tanggal cetak</span>
+              <strong>{printedDate}</strong>
+            </div>
           </div>
           <div className="receipt-total">
             <span>Total diterima</span>
             <strong>{money(receiptTransaction.amount)}</strong>
           </div>
+          {bankAccount && (
+            <div className="receipt-bank">
+              <span className="receipt-bank-label">
+                Pembayaran melalui transfer ke rekening berikut:
+              </span>
+              <div className="receipt-bank-row">
+                <span>Bank</span>
+                <strong>{bankAccount.name}</strong>
+              </div>
+              <div className="receipt-bank-row">
+                <span>Nomor rekening</span>
+                <strong>{bankAccount.number}</strong>
+              </div>
+              <div className="receipt-bank-row">
+                <span>Atas nama</span>
+                <strong>{bankAccount.holder}</strong>
+              </div>
+            </div>
+          )}
           {profile.note && <p className="receipt-note">{profile.note}</p>}
           <footer className="receipt-signature">
             <div className="receipt-signature-copy">
               <span>Diserahkan oleh</span>
               <strong>{currentUser?.name ?? "Petugas"}</strong>
               <small>Petugas penerima</small>
+              {currentUser?.nip && <small>NIP. {currentUser.nip}</small>}
             </div>
             <div className="receipt-thankyou">
               <strong>Terima kasih</strong>

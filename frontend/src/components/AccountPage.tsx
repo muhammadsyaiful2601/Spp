@@ -30,7 +30,7 @@ export function AccountPage({
   error: string;
   passwordError: string;
   passwordNotice: string;
-  onSave: (name: string, username: string, email: string) => void;
+  onSave: (name: string, username: string, email: string, nip: string) => void;
   onChangePassword: (input: {
     current_password: string;
     password: string;
@@ -65,6 +65,7 @@ export function AccountPage({
   const [name, setName] = useState(user.name);
   const [username, setUsername] = useState(user.username);
   const [email, setEmail] = useState(user.email);
+  const [nip, setNip] = useState(user.nip ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -77,11 +78,19 @@ export function AccountPage({
     setName(user.name);
     setEmail(user.email);
     setUsername(user.username);
+    setNip(user.nip ?? "");
   }
 
+  const nipValue = nip.trim();
   const dirty =
-    name !== user.name || email !== user.email || username !== user.username;
+    name !== user.name ||
+    email !== user.email ||
+    username !== user.username ||
+    nipValue !== (user.nip ?? "").trim();
   const usernameValid = /^[A-Za-z0-9_-]{3,100}$/.test(username);
+  // Mirrors the server rule so the field explains itself before submitting
+  // rather than coming back as a validation error.
+  const nipValid = /^[0-9A-Za-z ./-]*$/.test(nipValue);
   const joined = user.created_at
     ? new Date(user.created_at).toLocaleDateString("id-ID", {
         day: "numeric",
@@ -92,8 +101,8 @@ export function AccountPage({
 
   function submitProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!dirty || !usernameValid) return;
-    onSave(name.trim(), username.trim(), email.trim());
+    if (!dirty || !usernameValid || !nipValid) return;
+    onSave(name.trim(), username.trim(), email.trim(), nipValue);
   }
 
   function submitPassword(event: React.FormEvent<HTMLFormElement>) {
@@ -222,6 +231,24 @@ export function AccountPage({
                 {usernameValid
                   ? "Dipakai saat login. Hanya huruf, angka, tanda hubung, dan garis bawah."
                   : "Minimal 3 karakter, tanpa spasi atau titik."}
+              </small>
+            </div>
+            <div className="form-field full">
+              <label htmlFor="account-nip">NIP (Nomor Induk Pegawai)</label>
+              <input
+                id="account-nip"
+                value={nip}
+                disabled={loading || busy}
+                onChange={(event) => setNip(event.target.value)}
+                placeholder="19870412 199003 1 001"
+                maxLength={40}
+              />
+              <small className="field-hint">
+                {nipValid
+                  ? nipValue
+                    ? "Tercetak pada blok tanda tangan di kuitansi dan laporan."
+                    : "Kosongkan bila belum memiliki NIP — kolomnya tidak akan dicetak."
+                  : "Hanya angka, huruf, titik, spasi, tanda hubung, dan garis miring."}
               </small>
             </div>
           </div>

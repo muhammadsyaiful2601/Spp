@@ -1,5 +1,5 @@
 import type { Profile } from "../types";
-import { readStoredUser, readToken } from "../api";
+import { READ_CACHE_KEYS, readStoredUser, readToken } from "../api";
 import type { AuthUser } from "../api";
 import { initialProfile } from "../constants";
 
@@ -42,13 +42,11 @@ export function readProfile(): Profile {
  * (`cendekia-token`, `cendekia-user`) and the small preferences
  * (`cendekia-academic-year`, `cendekia-read-notices`) are deliberately absent:
  * clearing the cache must never sign the user out or reset their choices.
+ *
+ * The key list itself lives in `api.ts` so that purging a session and clearing
+ * the cache can never drift apart.
  */
-const READ_CACHE_KEYS = [
-  "cendekia-students",
-  "cendekia-transactions",
-  "cendekia-profile",
-  "cendekia-spp-amounts",
-] as const;
+export { READ_CACHE_KEYS };
 
 /**
  * Remove every read-only snapshot and return the bytes freed. Failures are

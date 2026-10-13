@@ -20,6 +20,8 @@ type ReportTransaction = {
   date: string;
   amount: number;
   status: string;
+  /** Class level, as reported by the server for this row. */
+  className?: string;
 };
 
 type ReportSchool = {
@@ -29,12 +31,66 @@ type ReportSchool = {
   phone: string;
   email: string;
   logo: string;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountHolder: string;
 };
 
 type ReportUser = {
   name: string;
   role: "pimpinan" | "admin";
+  /** Employee number, printed under the signature. */
+  nip?: string | null;
 };
+
+/**
+ * Which parts of the report to print.
+ *
+ * A treasurer printing a receipt trail does not want a page of arrears, and one
+ * chasing unpaid bills does not need every transaction. Splitting them is only
+ * honest because each part now states its own scope on the page.
+ */
+export type ReportSections = {
+  /** Payment transactions for the filtered period. */
+  payments: boolean;
+  /** Per-student SPP bill status for the whole year. */
+  billStatus: boolean;
+  /** Students who still owe, with the amount. */
+  arrears: boolean;
+};
+
+const ALL_SECTIONS: ReportSections = {
+  payments: true,
+  billStatus: true,
+  arrears: true,
+};
+
+/** Fixed bank account printed on reports, or null while any part is missing. */
+type BankAccount = {
+  name: string;
+  number: string;
+  holder: string;
+};
+
+function bankAccountOf(school: {
+  bankName?: string;
+  bankAccountNumber?: string;
+  bankAccountHolder?: string;
+}): BankAccount | null {
+  const name = school.bankName?.trim() ?? "";
+  const number = school.bankAccountNumber?.trim() ?? "";
+  const holder = school.bankAccountHolder?.trim() ?? "";
+  return name && number && holder ? { name, number, holder } : null;
+}
+
+/**
+ * One-paragraph payment instruction. Kept short because it sits under the
+ * header on a report whose body is a table — a long account block would push
+ * the first data rows down the page.
+ */
+function bankAccountText(account: BankAccount): string {
+  return `Pembayaran melalui transfer bank ${account.name} No. ${account.number} a.n. ${account.holder}.`;
+}
 
 async function convertLogoToPng(source: string): Promise<string | null> {
   if (!source) return null;
@@ -127,6 +183,12 @@ function writeRightLines(
   return y + lines.length * lineHeight;
 }
 
+/** `NIP. <number>` when known, the blank rule otherwise. */
+function nipLine(nip?: string | null): string {
+  const value = nip?.trim();
+  return value ? `NIP. ${value}` : "NIP. ..............................";
+}
+
 function drawSignatureBlock(
   pdf: jsPDF,
   {
@@ -138,6 +200,7 @@ function drawSignatureBlock(
     signerName,
     place,
     dateText,
+    nip,
   }: {
     pageWidth: number;
     pageHeight: number;
@@ -145,6 +208,8 @@ function drawSignatureBlock(
     startY: number;
     roleLabel: string;
     signerName: string;
+    /** Employee number of the signer; omitted when the account has none. */
+    nip?: string | null;
     place: string;
     dateText: string;
   },
@@ -185,11 +250,14 @@ function drawSignatureBlock(
     writeRightLines(pdf, signerName, right, lineAt + 5, boxWidth, 4.2);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
-    pdf.text("NIP. ..............................", right, lineAt + 10, { align: "right" });
+    // The account's own NIP when it has one, otherwise the blank rule that was
+    // always there. Printing "NIP. ……" next to a real number would look wrong,
+    // and printing nothing at all would drop a field the reader expects.
+    pdf.text(nipLine(nip), right, lineAt + 10, { align: "right" });
   } else {
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
-    pdf.text("NIP. ..............................", right, lineAt + 5, { align: "right" });
+    pdf.text(nipLine(nip), right, lineAt + 5, { align: "right" });
   }
 }
 
@@ -199,21 +267,35 @@ export async function downloadPaymentReport({
   transactions,
   students,
   classFilter,
+  monthFilter,
   academicYearLabel,
   mode = "download",
+  sections,
 }: {
   school: ReportSchool;
   user: ReportUser;
   transactions: ReportTransaction[];
   students: ReportStudent[];
   classFilter: string;
+  /** Label of the active month filter, e.g. "Januari"; "Semua bulan" for none. */
+  monthFilter: string;
   academicYearLabel: string;
   /**
    * `download` menyimpan berkas PDF, `print` membukanya di tab baru lalu
    * memicu dialog cetak browser secara otomatis.
    */
   mode?: "download" | "print";
+  /** Subset of the report to include; everything when omitted. */
+  sections?: ReportSections;
 }): Promise<void> {
+  // An empty selection would produce a cover page and nothing else, which is
+  // never what the user meant. Fall back to the payment list.
+  const wants = sections ?? ALL_SECTIONS;
+  const show = {
+    ...wants,
+    payments: wants.payments || (!wants.billStatus && !wants.arrears),
+  };
+
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
@@ -303,31 +385,58 @@ export async function downloadPaymentReport({
 
   pdf.setFontSize(8);
   pdf.setTextColor(45, 56, 48);
-  pdf.text(`Tingkat kelas: ${classFilter}`, margin, lineY + 22.5);
+  pdf.text(`Tingkat kelas: ${classFilter}  ·  Periode: ${monthFilter}`, margin, lineY + 22.5);
   pdf.text(
-    `Dicetak: ${printedAt(now)}  ·  ${transactions.length} transaksi`,
+    show.payments
+      ? `Dicetak: ${printedAt(now)}  ·  ${transactions.length} transaksi`
+      : `Dicetak: ${printedAt(now)}`,
     pageWidth - margin,
     lineY + 22.5,
     { align: "right" },
   );
 
+  // Payment instruction sits above the table, so the account is on the page
+  // before anyone reads a single figure.
+  let tableStart = lineY + 27;
+  const bankAccount = bankAccountOf(school);
+  if (bankAccount) {
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(45, 56, 48);
+    tableStart = writeCenteredBlock(
+      pdf,
+      bankAccountText(bankAccount),
+      pageCenter,
+      lineY + 27.5,
+      pageWidth - margin * 2,
+      4,
+    ) + 3;
+  }
+
   const filteredStudents = students.filter(
     (student) => classFilter === "Semua kelas" || student.className === classFilter,
   );
+// Where the recap ends, so the signature can follow it. `null` when the recap
+  // itself was not printed.
+  let recapEnd: number | null = null;
   const totalPaid = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
   const totalArrears = filteredStudents.reduce((sum, student) => sum + student.sppArrears, 0);
   const payingCount = filteredStudents.filter((student) => student.paid.length > 0).length;
   const arrearsCount = filteredStudents.filter((student) => student.sppUnpaidCount > 0).length;
+  const lunasCount = filteredStudents.length - arrearsCount;
 
   const studentByName = new Map(students.map((student) => [student.name, student]));
   const body = transactions.map((transaction, index) => {
+    // Prefer the class carried by the report row itself. Matching the student
+    // roster by name is only a fallback: two students can share a name, and a
+    // report is a financial document, so the class has to come from the row the
+    // server built rather than from a name match.
     const student = studentByName.get(transaction.student);
 
     return [
       String(index + 1),
       transaction.id,
       student?.name ?? transaction.student,
-      student?.className ?? "-",
+      transaction.className ?? student?.className ?? "-",
       transaction.detail,
       rupiah(transaction.amount),
       transaction.status,
@@ -335,9 +444,10 @@ export async function downloadPaymentReport({
     ];
   });
 
-  autoTable(pdf, {
-    startY: lineY + 27,
-    head: [["No.", "Kode transaksi", "Siswa", "Kelas", "Rincian pembayaran", "Jumlah", "Status transaksi", "Tanggal"]],
+  if (show.payments) {
+    autoTable(pdf, {
+      startY: tableStart,
+      head: [["No.", "Kode transaksi", "Siswa", "Kelas", "Rincian pembayaran", "Jumlah", "Status transaksi", "Tanggal"]],
     body: body.length ? body : [["-", "-", "Tidak ada transaksi", "-", "-", "-", "-", "-"]],
     foot: [
       [
@@ -385,16 +495,36 @@ export async function downloadPaymentReport({
       7: { cellWidth: 22 },
     },
   });
+  }
 
-  pdf.addPage();
-  pdf.setTextColor(34, 47, 39);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(12);
-  pdf.text("STATUS TAGIHAN SPP SISWA", margin, 20);
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(8);
-  pdf.text(`Tahun ajaran ${academicYearLabel} · Tingkat kelas: ${classFilter}`, margin, 26);
-  const billStatusRows = filteredStudents.map((student, index) => {
+  // Only start a new page when something already used page one. With the payment
+  // list switched off, page one would otherwise hold nothing but the letterhead
+  // and the report would waste a sheet of paper saying nothing.
+  let nextSectionY = 20;
+  if (show.billStatus || show.arrears) {
+    if (show.payments) {
+      pdf.addPage();
+    } else {
+      nextSectionY = tableStart + 4;
+    }
+  }
+
+  if (show.billStatus) {
+    pdf.setTextColor(34, 47, 39);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(12);
+    pdf.text("STATUS TAGIHAN SPP SISWA", margin, nextSectionY);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    // Spell out the full scope. The bill-status table is a whole-year view of the
+    // SPP bills, so saying "semua bulan" here is honest: it deliberately does not
+    // narrow to one month the way the payment list above it does.
+    pdf.text(
+      `Tahun ajaran ${academicYearLabel} · Tingkat kelas: ${classFilter} · Status tagihan SPP untuk seluruh bulan tahun ajaran`,
+      margin,
+      nextSectionY + 6,
+    );
+    const billStatusRows = filteredStudents.map((student, index) => {
       const paidCount = student.paid.length;
       const unpaidCount = student.sppUnpaidCount;
       const status = student.sppTotalCount === 0
@@ -405,31 +535,32 @@ export async function downloadPaymentReport({
             ? "Menunggak"
             : "Sebagian";
 
+      // Arrears money and the "bulan belum bayar" count live in their own section.
+      // Repeating them here made the two sections say the same thing twice, and
+      // left the reader unsure which one was authoritative.
       return [
         String(index + 1),
         student.name,
         student.className,
         `${paidCount} / ${student.sppTotalCount}`,
-        String(unpaidCount),
-        rupiah(student.sppArrears),
         status,
       ];
     });
-  autoTable(pdf, {
-    startY: 31,
-    head: [["No.", "Siswa", "Kelas", "Bulan lunas", "Tunggakan", "Nominal tunggakan", "Status"]],
+
+    autoTable(pdf, {
+    startY: nextSectionY + 11,
+    head: [["No.", "Siswa", "Kelas", "Bulan lunas", "Status"]],
     body: billStatusRows.length
       ? billStatusRows
-      : [["-", "Tidak ada data siswa", "-", "-", "-", "-", "-"]],
+      : [["-", "Tidak ada data siswa", "-", "-", "-"]],
     foot: [
       [
         {
-          content: `Total yang menunggak (${arrearsCount} siswa)`,
-          colSpan: 5,
+          content: `Lunas ${lunasCount} siswa · Belum lunas ${arrearsCount} siswa`,
+          colSpan: 4,
           styles: { halign: "right", fontStyle: "bold" },
         },
-        { content: rupiah(totalArrears), styles: { halign: "right", fontStyle: "bold" } },
-        { content: "" },
+        { content: "", styles: {} },
       ],
     ],
     margin: { left: margin, right: margin, bottom: 34 },
@@ -458,45 +589,152 @@ export async function downloadPaymentReport({
     showFoot: "lastPage",
     columnStyles: {
       0: { cellWidth: 10, halign: "center" },
-      1: { cellWidth: 44 },
-      2: { cellWidth: 22 },
-      3: { cellWidth: 23, halign: "center" },
-      4: { cellWidth: 20, halign: "center" },
-      5: { cellWidth: 34, halign: "right" },
-      6: { cellWidth: 29, halign: "center" },
+      1: { cellWidth: 60 },
+      2: { cellWidth: 24 },
+      3: { cellWidth: 28, halign: "center" },
+      4: { cellWidth: 40, halign: "center" },
     },
   });
-
-  const tableEnd = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
-    .lastAutoTable?.finalY ?? 80;
-  let recapY = tableEnd + 10;
-  if (recapY + 28 > pageHeight - 48) {
-    pdf.addPage();
-    recapY = 20;
   }
 
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(9);
-  pdf.setTextColor(34, 47, 39);
-  pdf.text("RINGKASAN TOTAL", margin, recapY);
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(8);
-  pdf.text(
-    `Total yang membayar: ${rupiah(totalPaid)} · ${transactions.length} transaksi · ${payingCount} siswa pernah membayar`,
-    margin,
-    recapY + 6,
-  );
-  pdf.text(
-    `Total yang menunggak: ${rupiah(totalArrears)} · ${arrearsCount} siswa masih memiliki tunggakan SPP`,
-    margin,
-    recapY + 11,
-  );
+if (show.arrears) {
+    // Follow the bill-status table on the same page when it left room, so a
+    // report of two short sections does not become two near-empty sheets.
+    let arrearsY = nextSectionY;
+    if (show.billStatus) {
+      const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
+        .lastAutoTable?.finalY;
+      if (typeof finalY === "number") {
+        arrearsY = finalY + 14;
+      }
+    }
+    if (arrearsY + 40 > pageHeight - 20) {
+      pdf.addPage();
+      arrearsY = 20;
+    }
 
-  let signY = recapY + 24;
-  if (signY + 44 > pageHeight - 8) {
-    pdf.addPage();
-    signY = 20;
+    pdf.setTextColor(34, 47, 39);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(12);
+    pdf.text("RINCIAN TUNGGAKAN SPP", margin, arrearsY);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.text(
+      `Tahun ajaran ${academicYearLabel} · Tingkat kelas: ${classFilter} · Bulan SPP yang belum dibayar (seluruh tahun ajaran)`,
+      margin,
+      arrearsY + 6,
+    );
+    const arrearsRows = filteredStudents
+      .filter((student) => (student.sppUnpaidCount ?? 0) > 0)
+      .map((student, index) => [
+        String(index + 1),
+        student.name,
+        student.className,
+        String(student.sppUnpaidCount),
+        rupiah(student.sppArrears),
+      ]);
+    autoTable(pdf, {
+      startY: arrearsY + 11,
+      head: [["No.", "Siswa", "Kelas", "Bulan belum bayar", "Nominal tunggakan"]],
+      body: arrearsRows.length
+        ? arrearsRows
+        : [["-", "Tidak ada tunggakan", "-", "-", "-"]],
+      foot: [
+        [
+          {
+            content: `Total tunggakan (${arrearsRows.length} siswa)`,
+            colSpan: 4,
+            styles: { halign: "right", fontStyle: "bold" },
+          },
+          { content: rupiah(totalArrears), styles: { halign: "right", fontStyle: "bold" } },
+        ],
+      ],
+      margin: { left: margin, right: margin, bottom: 34 },
+      theme: "grid",
+      styles: {
+        font: "helvetica",
+        fontSize: 8,
+        cellPadding: 2.5,
+        textColor: [43, 53, 46],
+        lineColor: [93, 104, 96],
+        lineWidth: 0.18,
+        overflow: "linebreak",
+        valign: "middle",
+      },
+      headStyles: {
+        fillColor: [222, 230, 239],
+        textColor: [35, 48, 40],
+        fontStyle: "bold",
+        halign: "center",
+      },
+      footStyles: {
+        fillColor: [241, 245, 241],
+        textColor: [35, 48, 40],
+        fontStyle: "bold",
+      },
+      showFoot: "lastPage",
+      columnStyles: {
+        0: { cellWidth: 10, halign: "center" },
+        1: { cellWidth: 60 },
+        2: { cellWidth: 24 },
+        3: { cellWidth: 34, halign: "center" },
+        4: { cellWidth: 40, halign: "right" },
+      },
+    });
   }
+
+  if (show.payments || show.arrears) {
+    const tableEnd = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
+      .lastAutoTable?.finalY ?? 80;
+    let recapY = tableEnd + 10;
+    if (recapY + 28 > pageHeight - 48) {
+      pdf.addPage();
+      recapY = 20;
+    }
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    pdf.setTextColor(34, 47, 39);
+    // Scope is spelled out because the first line is filtered by period while the
+    // arrears below it is a whole-year figure. Mixing them under one bare heading
+    // would let a reader subtract one from the other and get a wrong answer.
+    pdf.text(
+      `RINGKASAN — ${monthFilter === "Semua bulan" ? "seluruh periode" : monthFilter} · ${classFilter}`,
+      margin,
+      recapY,
+    );
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    if (show.payments) {
+      pdf.text(
+        `Total yang membayar (periode ini): ${rupiah(totalPaid)} · ${transactions.length} transaksi · ${payingCount} siswa pernah membayar`,
+        margin,
+        recapY + 6,
+      );
+    }
+    if (show.arrears) {
+      pdf.text(
+        `Total yang menunggak (seluruh tagihan tahun ajaran, bukan periode ini): ${rupiah(totalArrears)} · ${arrearsCount} siswa masih memiliki tunggakan SPP`,
+        margin,
+        recapY + (show.payments ? 11 : 6),
+      );
+    }
+    recapEnd = recapY + (show.payments && show.arrears ? 24 : 12);
+  }
+
+  // The signature block is always printed: a report without it is not a document
+  // anyone can file.
+  //
+  // Its position must follow whatever was actually drawn last. Anchoring it to a
+  // fixed offset instead made it land in the middle of a long bill-status table
+  // whenever the recap was skipped — printing the signer's details straight over
+  // rows 174-180 of it.
+  // If it will not fit on the current page the block moves to a fresh one. The
+  // helper below repeats this check, so this only avoids handing it a start
+  // position that is already known to overflow.
+  const lastDrawn = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
+    .lastAutoTable?.finalY;
+  const signY = Math.max(recapEnd ?? 0, lastDrawn ?? 0) + 14;
 
   drawSignatureBlock(pdf, {
     pageWidth,
@@ -505,6 +743,7 @@ export async function downloadPaymentReport({
     startY: signY,
     roleLabel: user.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan",
     signerName: user.name.trim(),
+    nip: user.nip,
     place: placeFromAddress(school.address),
     dateText: now.toLocaleDateString("id-ID", {
       day: "numeric",
@@ -524,12 +763,18 @@ export async function downloadPaymentReport({
     });
   }
 
-  const filename = `laporan-pembayaran-${now.toISOString().slice(0, 10)}.pdf`;
+  // The filename carries the scope so exports of different years or classes do
+  // not overwrite each other in the downloads folder.
+  const filename = `laporan-pembayaran-${academicYearLabel.replace(/[^0-9]+/g, "-")}-${classFilter.replace(/[^0-9A-Za-z]+/g, "-")}-${now.toISOString().slice(0, 10)}.pdf`;
 
   if (mode === "print") {
-    // autoPrint + tab baru agar dialog cetak browser langsung terbuka.
+    // `autoPrint` puts a print action inside the PDF, and the browser's own PDF
+    // viewer runs it as soon as the file loads. A blob URL is used rather than
+    // jsPDF's `dataurlnewwindow`, because browsers block top-level navigation to
+    // a `data:` URL — that path silently opens nothing at all on Chrome.
     pdf.autoPrint();
-    pdf.output("dataurlnewwindow", { filename });
+    const url = pdf.output("bloburl");
+    window.open(url, "_blank");
 
     return;
   }
@@ -650,9 +895,25 @@ export async function downloadStudentReport({
   const sppArrears = student.sppArrears ?? 0;
   const nonSppArrears = student.nonSppArrears ?? 0;
   const totalArrears = sppArrears + nonSppArrears;
-  const infoY = titleY + 15;
+
+  let infoY = titleY + 15;
+  const studentBank = bankAccountOf(school);
+  if (studentBank) {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(45, 56, 48);
+    infoY = writeCenteredBlock(
+      pdf,
+      bankAccountText(studentBank),
+      textCenter,
+      titleY + 14,
+      pageWidth - margin * 2,
+      4,
+    ) + 6;
+  }
 
   pdf.setFontSize(9);
+  pdf.setTextColor(20, 32, 26);
   pdf.setFont("helvetica", "bold");
   pdf.text("IDENTITAS SISWA", margin, infoY);
   autoTable(pdf, {
@@ -780,6 +1041,7 @@ export async function downloadStudentReport({
     startY: historyEnd + 12,
     roleLabel: user?.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan",
     signerName: user?.name?.trim() ?? "",
+    nip: user?.nip,
     place: placeFromAddress(school.address),
     dateText: now.toLocaleDateString("id-ID", {
       day: "numeric",

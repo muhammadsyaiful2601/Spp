@@ -58,7 +58,7 @@ export function printStudentReportPage({
   /** Data URL logo sekolah (base64). Jika tidak diberikan, fallback ke logo profil. */
   logoDataUrl?: string | null;
   /** Penanda tangan laporan; memengaruhi label jabatan pada blok tanda tangan. */
-  user?: { name: string; role: "pimpinan" | "admin" } | null;
+  user?: { name: string; role: "pimpinan" | "admin"; nip?: string | null } | null;
 }): void {
   const totalPaid = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
   const sppArrears = student.sppArrears ?? 0;
@@ -89,12 +89,34 @@ export function printStudentReportPage({
   ].filter(Boolean).map(escapeHtml).join(" · ");
   const roleLabel = user?.role === "pimpinan" ? "Pimpinan Sekolah" : "Petugas Keuangan";
   const signerName = user?.name?.trim() ?? "";
+  // Printed when the account has one; the blank rule is kept for anyone without.
+  const nipValue = user?.nip?.trim() ?? "";
+  const nipLine = nipValue
+    ? `NIP. ${nipValue}`
+    : "NIP. ..............................";
   const place = placeFromAddress(school.address);
   const signDate = new Date().toLocaleDateString("id-ID", {
     day: "numeric",
     month: "long",
     year: "numeric",
   });
+  const hasBankAccount = Boolean(
+    school.bankName.trim() &&
+      school.bankAccountNumber.trim() &&
+      school.bankAccountHolder.trim(),
+  );
+  const bankBlock = hasBankAccount
+    ? `<div class="bank">
+        <p class="bank-title">Pembayaran melalui transfer ke rekening berikut:</p>
+        <table>
+          <tbody>
+            <tr><th>Nama bank</th><td>${escapeHtml(school.bankName.trim())}</td></tr>
+            <tr><th>Nomor rekening</th><td>${escapeHtml(school.bankAccountNumber.trim())}</td></tr>
+            <tr><th>Atas nama</th><td>${escapeHtml(school.bankAccountHolder.trim())}</td></tr>
+          </tbody>
+        </table>
+      </div>`
+    : "";
 
   printWindow.opener = null;
   printWindow.focus();
@@ -123,6 +145,10 @@ export function printStudentReportPage({
           .amount { text-align: right; white-space: nowrap; }
           .empty { padding: 16px; text-align: center; color: #68736a; }
           .printed { margin-top: 22px; text-align: right; color: #68736a; font-size: 10px; }
+          .bank { margin: 18px 0 0; padding: 11px 13px; background: #f4f7f3; border: 1px solid #dfe7de; border-radius: 6px; }
+          .bank-title { margin: 0 0 7px; color: #475249; font-size: 11px; }
+          .bank table { width: 100%; }
+          .bank th { width: 34%; background: transparent; font-weight: 700; }
           .signature { margin: 34px 0 0 auto; width: 260px; font-size: 12px; color: #202820; }
           .signature p { margin: 0 0 2px; }
           .signature-space { height: 56px; }
@@ -149,6 +175,7 @@ export function printStudentReportPage({
           </header>
           <h2 class="report-title">LAPORAN PEMBAYARAN SISWA</h2>
           <p class="year">Tahun Ajaran ${escapeHtml(academicYearLabel)}</p>
+          ${bankBlock}
           <h2>Identitas Siswa</h2>
           <table>
             <tbody>
@@ -178,7 +205,7 @@ export function printStudentReportPage({
             <p>${escapeHtml(roleLabel)}</p>
             <div class="signature-space"></div>
             <p class="signature-name">${escapeHtml(signerName || "\u00a0")}</p>
-            <p>NIP. ..............................</p>
+            <p>${escapeHtml(nipLine)}</p>
           </div>
           <p class="printed">Dicetak: ${escapeHtml(printedTime)}</p>
         </main>

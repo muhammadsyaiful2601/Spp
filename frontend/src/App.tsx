@@ -22,13 +22,15 @@ import {
   applyTheme,
   brandingErrorMessage,
   changePassword,
-  clearSession,
+  purgeSession,
+  SESSION_PURGED_EVENT,
   createAcademicYear,
   createTreasurer,
   deleteSchoolFavicon,
   fetchAcademicYears,
   fetchAccount,
   fetchActivityLogs,
+  fetchPaymentReport,
   fetchPortalData,
   fetchStudentBills,
   fetchPublicSchoolProfile,
@@ -46,6 +48,7 @@ import {
   setTreasurerActive,
   storeSession,
   resetTreasurerPassword,
+  toTransaction,
   updateAccount,
   updateTreasurer,
   uploadSchoolFavicon,
@@ -91,6 +94,7 @@ import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
 import StudentsPage from "./components/StudentsPage";
 import { printStudentReportPage } from "./studentPrint";
+import type { ReportSections } from "./reportPdf";
 import PaymentPage from "./components/PaymentPage";
 import ReportsPage from "./components/ReportsPage";
 import SettingsPage from "./components/SettingsPage";
@@ -156,6 +160,24 @@ function App() {
   const [verifyNotice, setVerifyNotice] = useState("");
   const [verifyError, setVerifyError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  /**
+   * Set only after a successful sign-in, never on a page reload.
+   *
+   * A refresh restores the session from storage and already has last-known data
+   * in `localStorage` to draw, so replacing the whole interface with a splash
+   * would be a regression — that is why this flag exists separately from
+   * `authLoading`. Only a fresh sign-in has nothing to show yet.
+   */
+  const [bootingAfterLogin, setBootingAfterLogin] = useState(false);
+  /**
+   * Safety valve for the boot gate.
+   *
+   * The gate below waits for the first round of data. A server that answers
+   * slowly — or an endpoint that never settles — must not lock the user out of
+   * an application they have just proved they can log into, so the wait is
+   * capped and the app opens with whatever did arrive.
+   */
+  const [bootTimedOut, setBootTimedOut] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [students, setStudents] = useState(() =>
     readLocal("cendekia-students", initialStudents),
@@ -177,7 +199,25 @@ function App() {
   const [payCost, setPayCost] = useState("");
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
-  const [reportClass, setReportClass] = useState("Semua kelas");
+  /** Report month filter; `0` means every month. Calendar order, not billing. */
+  const [reportMonth, setReportMonth] = useState(0);
+  /** Which parts the printed report contains; everything by default. */
+  const [reportSections, setReportSections] = useState<ReportSections>({
+    payments: true,
+    billStatus: true,
+    arrears: true,
+  });
+  /** Report class filter as a class level id; `null` means every class. */
+  const [reportClassId, setReportClassId] = useState<number | null>(null);
+  /**
+   * Report year filter; `null` follows the year chosen in the topbar.
+   *
+   * A report is a document about one period, so it carries its own year rather
+   * than silently inheriting whatever the rest of the app happens to be looking
+   * at. Keeping `null` as "follow the topbar" means opening the page still shows
+   * the year the user is already working in.
+   */
+  const [reportYearOverride, setReportYearOverride] = useState<number | null>(null);
   // Audit-trail filters. `logSearchTerm` deliberately lags `logSearch` so typing
   // in the search box does not fire one request per keystroke.
   const [logSearch, setLogSearch] = useState("");
@@ -222,9 +262,10 @@ function App() {
   const noticeRef = useRef<HTMLDivElement | null>(null);
   const today = formatToday(now);
   const queryClient = useQueryClient();
-  // Declared ahead of the data queries below: `emailVerified` gates which of
-  // them may run, and a query referencing it earlier would hit the temporal
-  // dead zone during the first render.
+  // Declared ahead of the data queries below: several of them are gated on the
+  // screen the user is on, and a query referencing `page` earlier would hit the
+  // temporal dead zone during the first render.
+  const [page, setPage] = useState<Page>("dashboard");
   const accountQuery = useQuery({
     queryKey: ["account", currentUser?.id],
     queryFn: fetchAccount,
@@ -238,6 +279,15 @@ function App() {
    * session is never flashed to a blank page.
    */
   const emailVerified = accountQuery.data ? accountQuery.data.email_verified : true;
+
+  // Derived, not synchronised: an unverified account always renders the profile
+  // screen, and a non-leadership account can never land on maintenance. Defined
+  // before the data queries because those queries are gated on the active page.
+  const effectivePage: Page = !emailVerified
+    ? "profil"
+    : currentUser?.role !== "pimpinan" && page === "pemeliharaan"
+      ? "dashboard"
+      : page;
 
   const schoolProfileQuery = useQuery({
     queryKey: ["public-school-profile"],
@@ -263,6 +313,84 @@ function App() {
     // refetch look like a failure.
     enabled: Boolean(currentUser) && emailVerified,
   });
+
+  // Which screen the user is actually looking at. Used below to keep expensive
+  // queries off the login path: a screen that is not on display has no reason
+  // to spend the user's connection on it.
+  const isReportPage = effectivePage === "laporan";
+  const canOpenTariffs =
+    Boolean(currentUser) && emailVerified && effectivePage === "pengaturan";
+
+  /**
+   * The first round of data the shell needs before it is worth drawing.
+   *
+   * `isFetched` rather than `isSuccess` on purpose: these are settled, not
+   * necessarily successful. Waiting for success would mean one failing endpoint
+   * — or one account that legitimately has no academic year — held the splash
+   * open forever, which is strictly worse than opening the app and letting the
+   * screen show that something is missing.
+   *
+   * `portalQuery` is the reason this is sequential: it is keyed by
+   * `effectiveYearId`, which only exists once the academic years arrive. When no
+   * year resolves at all it never runs, so it must not be counted as pending.
+   */
+  const bootSteps = useMemo(
+    () => [
+      { label: "Memverifikasi akun", settled: !currentUser || accountQuery.isFetched },
+      { label: "Memuat identitas sekolah", settled: schoolProfileQuery.isFetched },
+      { label: "Memuat tahun ajaran", settled: !currentUser || academicYearsQuery.isFetched },
+      {
+        label: "Memuat data portal",
+        settled:
+          !currentUser ||
+          effectiveYearId === null ||
+          portalQuery.isFetched,
+      },
+    ],
+    [
+      currentUser,
+      accountQuery.isFetched,
+      schoolProfileQuery.isFetched,
+      academicYearsQuery.isFetched,
+      effectiveYearId,
+      portalQuery.isFetched,
+    ],
+  );
+  const bootReady = bootSteps.every((step) => step.settled);
+
+  // The purge listener runs on every session teardown, so it is mounted once. Its
+  // handler reads the reset through a ref: `resetSignedInState` closes over a
+  // long list of setters, and depending on it would re-register the listener on
+  // every render without ever changing what it does.
+const resetSignedInStateRef = useRef(resetSignedInState);
+useEffect(() => {
+    resetSignedInStateRef.current = resetSignedInState;
+  });
+
+  useEffect(() => {
+    // The server can reject a token at any moment — an idle session revoked it,
+    // a treasurer was deactivated, the token simply expired. The response
+    // interceptor purges storage; this puts the running interface back in step so
+    // it does not sit on a signed-in screen that can no longer make a request.
+    const onPurged = () => {
+      clearSessionActivity();
+      resetSignedInStateRef.current(
+        "Sesi Anda berakhir. Silakan masuk kembali.",
+      );
+    };
+    window.addEventListener(SESSION_PURGED_EVENT, onPurged);
+    return () => window.removeEventListener(SESSION_PURGED_EVENT, onPurged);
+  }, []);
+
+  useEffect(() => {
+    if (!bootingAfterLogin || bootReady) return;
+    const timer = window.setTimeout(() => setBootTimedOut(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [bootingAfterLogin, bootReady]);
+
+  const pendingBootLabel =
+    bootSteps.find((step) => !step.settled)?.label ?? "Menyiapkan portal";
+
   const paymentBillsQuery = useQuery({
     queryKey: ["student-bills", selected?.dbId, effectiveYearId],
     queryFn: () => fetchStudentBills(selected!.dbId!, effectiveYearId),
@@ -273,7 +401,10 @@ function App() {
   const treasurersQuery = useQuery({
     queryKey: ["treasurers"],
     queryFn: fetchTreasurers,
-    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
+    enabled:
+      Boolean(currentUser) &&
+      currentUser?.role === "pimpinan" &&
+      effectivePage === "bendahara",
   });
   const [treasurerBusy, setTreasurerBusy] = useState(false);
   const [treasurerError, setTreasurerError] = useState("");
@@ -337,17 +468,47 @@ function App() {
     [portalQuery.data],
   );
 
-  // Tariff reads are leadership-only; an admin would only ever get a 403.
-  const sppPeriodsQuery = useQuery({
+  // Tariff reads are shared with `admin` (the treasurer role owns the amounts),
+// so the queries run for both. The server enforces the same rule; a mismatch
+// would only ever surface as a 403 in the UI.
+const sppPeriodsQuery = useQuery({
     queryKey: ["spp-periods", effectiveYearId],
     queryFn: () => fetchSppPeriods(effectiveYearId),
-    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan",
+    enabled: canOpenTariffs && effectiveYearId !== null,
   });
   const positionRatesQuery = useQuery({
     queryKey: ["position-rates", effectiveYearId],
     queryFn: () => fetchPositionRates(effectiveYearId),
-    enabled: Boolean(currentUser) && currentUser?.role === "pimpinan" && effectiveYearId !== null,
+    enabled: canOpenTariffs && effectiveYearId !== null,
   });
+
+  // The year the report is about: an explicit choice on the reports screen when
+  // one is made, otherwise whatever the topbar is scoped to.
+  const reportYearId = reportYearOverride ?? effectiveYearId;
+  const reportYearLabel =
+    academicYears.find((year) => year.id === reportYearId)?.name ?? academicYear;
+
+  // The report reads its own, complete history from the server. The portal feed
+  // is capped at the 100 most recent payments because the dashboard only shows
+  // a short recent list, so filtering that array here would silently truncate
+  // every export to 100 rows.
+  const paymentReportQuery = useQuery({
+    queryKey: ["payment-report", reportYearId, reportClassId, reportMonth],
+    queryFn: () =>
+      fetchPaymentReport({
+        academicYearId: reportYearId,
+        classLevelId: reportClassId,
+        month: reportMonth === 0 ? null : reportMonth,
+      }),
+    // The whole year's payments, downloaded on every login, for a page most
+    // sessions never open. Loading it lazily is the single biggest win here:
+    // it stays instant to open once the user actually goes to the report.
+    enabled: isReportPage && reportYearId !== null,
+  });
+  const reportRows = useMemo(
+    () => (paymentReportQuery.data?.rows ?? []).map(toTransaction),
+    [paymentReportQuery.data],
+  );
 
   /** Fall back to the first class level until the user picks another. */
   const effectiveCostClassId = costClassId ?? classLevelRows[0]?.id ?? null;
@@ -472,7 +633,6 @@ function App() {
       return `Pos biaya ${row.name} berhasil dihapus.`;
     });
   };
-  const [page, setPage] = useState<Page>("dashboard");
 
   /**
    * The address typed into the verification card. Kept as a draft so a reload or
@@ -482,13 +642,6 @@ function App() {
   const storedEmail = accountQuery.data?.email ?? currentUser?.email ?? "";
   const emailDirty = emailDraft !== null && emailDraft !== storedEmail;
 
-  // Derived, not synchronised: an unverified account always renders the profile
-  // screen. `effectivePage` is what the renderer uses, so no effect is needed.
-  const effectivePage: Page = !emailVerified
-    ? "profil"
-    : currentUser?.role !== "pimpinan" && page === "pemeliharaan"
-      ? "dashboard"
-      : page;
   // Non-SPP positions are read from `position_rates`; the constant is only a
   // placeholder for the moment before the request resolves.
   // Class level names drive the SPP rate lookup, so they come from the database.
@@ -585,16 +738,7 @@ function App() {
           sppTotalCount: student.spp_total_count,
         })),
       );
-      setTransactions(
-        portal.transactions.map((transaction) => ({
-          id: transaction.number,
-          student: transaction.student,
-          detail: transaction.detail,
-          date: transaction.date,
-          amount: transaction.amount,
-          status: transaction.status,
-        })),
-      );
+      setTransactions(portal.transactions.map(toTransaction));
       if (portal.spp_rates.length > 0) {
         setSppAmounts(portal.spp_rates);
       }
@@ -741,6 +885,9 @@ function App() {
         favicon: server.favicon_path
           ? publicStorageUrl(server.favicon_path)
           : "",
+        bankName: server.bank_name ?? "",
+        bankAccountNumber: server.bank_account_number ?? "",
+        bankAccountHolder: server.bank_account_holder ?? "",
       }));
     });
   }, [schoolProfileQuery.data]);
@@ -834,24 +981,26 @@ function App() {
             { id: "laporan" as Page, text: "Laporan", icon: ClipboardList },
           ],
         },
-        ...(currentUser?.role === "pimpinan"
-          ? [
-              {
-                label: "PREFERENSI",
-                links: [
-                  {
-                    id: "pengaturan" as Page,
-                    text: "Pengaturan tarif",
-                    icon: SlidersHorizontal,
-                  },
+        {
+          label: "PREFERENSI",
+          links: [
+            // Tariffs are shared: the treasurer records the payments these
+            // amounts produce, so `admin` gets the pricing screen too.
+            {
+              id: "pengaturan" as Page,
+              text: "Pengaturan tarif",
+              icon: SlidersHorizontal,
+            },
+            ...(currentUser?.role === "pimpinan"
+              ? [
                   { id: "profil" as Page, text: "Profil sekolah", icon: Building2 },
                   { id: "bendahara" as Page, text: "Kelola bendahara", icon: Wallet },
                   { id: "log" as Page, text: "Log aktivitas", icon: History },
                   { id: "pemeliharaan" as Page, text: "Backup & cache", icon: Database },
-                ],
-              },
-            ]
-          : []),
+                ]
+              : []),
+          ],
+        },
         { label: "AKUN", links: [{ id: "akun" as Page, text: "Akun saya", icon: UserCog }] },
       ]
     // Unverified accounts see only the screen where they can verify.
@@ -980,6 +1129,7 @@ function App() {
         date: new Date(saved.paid_at).toLocaleString("id-ID"),
         amount: Number(saved.amount),
         status: "Lunas",
+        paidAt: saved.paid_at,
       };
       setTransactions((items) => [transaction, ...items]);
       setReceiptTransaction(transaction);
@@ -994,13 +1144,56 @@ function App() {
     }
   }
   async function exportReport(
-    format: "csv" | "pdf" | "print",
-    reportTransactions: Transaction[] = transactions,
+    format: "csv" | "xlsx" | "pdf" | "print",
+    reportTransactions?: Transaction[],
     classFilter = "Semua kelas",
+    monthFilter = "Semua bulan",
+    sections?: ReportSections,
   ) {
+    // Resolve the row set once, on the server, so no export can inherit the
+    // portal feed's 100-row cap. The Reports page passes rows it already
+    // fetched for the active filters; the dashboard buttons pass nothing and
+    // get the unfiltered year here.
+    let exportRows = reportTransactions;
+    if (!exportRows) {
+      setPdfLoading(true);
+      try {
+        const result = await fetchPaymentReport({ academicYearId: reportYearId });
+        exportRows = result.rows.map(toTransaction);
+        if (result.meta.truncated) {
+          setToast("Laporan melebihi batas baris server dan terpotong. Buka halaman Laporan untuk memfilter.");
+        }
+      } catch {
+        setToast("Laporan gagal dimuat dari server. Coba lagi.");
+        setPdfLoading(false);
+        return;
+      }
+    }
+
     if (format === "pdf" || format === "print") {
       setPdfLoading(true);
       try {
+        // The SPP bill-status table is built from the student roster, and the
+        // roster is year-scoped. If the report is about a different year than
+        // the topbar, pulling the topbar's roster would mix two years on one
+        // page — so fetch the matching roster instead.
+        let reportStudents = students;
+        if (reportYearId !== effectiveYearId && reportYearId !== null) {
+          const portal = await fetchPortalData(reportYearId);
+          reportStudents = portal.students.map((student) => ({
+            id: student.student_number,
+            dbId: student.id,
+            name: student.name,
+            className: student.class_name,
+            nisn: student.nisn,
+            paid: student.paid_months,
+            sppArrears: student.spp_arrears,
+            nonSppArrears: student.non_spp_arrears,
+            sppUnpaidCount: student.spp_unpaid_count,
+            sppTotalCount: student.spp_total_count,
+          }));
+        }
+
         const { downloadPaymentReport } = await import("./reportPdf");
         await downloadPaymentReport({
           school: {
@@ -1009,9 +1202,9 @@ function App() {
               ? publicStorageUrl(schoolProfileQuery.data.logo_path)
               : profile.logo,
           },
-          user: currentUser ?? { name: "Petugas Keuangan", role: "admin" },
-          transactions: reportTransactions,
-          students: students.map((student) => ({
+          user: currentUser ?? { name: "Petugas Keuangan", role: "admin", nip: null },
+          transactions: exportRows,
+          students: reportStudents.map((student) => ({
             name: student.name,
             className: student.className,
             paid: student.paid,
@@ -1020,7 +1213,11 @@ function App() {
             sppTotalCount: student.sppTotalCount ?? 0,
           })),
           classFilter,
-          academicYearLabel: academicYear,
+          monthFilter,
+          academicYearLabel: reportYearLabel,
+          // The dashboard's own Print button passes no sections, so it falls
+          // back to the full report there.
+          sections: sections ?? reportSections,
           mode: format === "print" ? "print" : "download",
         });
         setToast(
@@ -1036,48 +1233,84 @@ function App() {
       return;
     }
 
-    const rows = [
-      ["No. Transaksi", "Nama siswa", "Rincian", "Tanggal", "Jumlah", "Status"],
-      ...reportTransactions.map((item) => [
-        item.id,
-        item.student,
-        item.detail,
-        item.date,
-        String(item.amount),
-        item.status,
-      ]),
-    ];
-    const csv = rows
-      .map((row) =>
-        row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(","),
-      )
-      .join("\n");
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(
-      new Blob([csv], { type: "text/csv;charset=utf-8" }),
-    );
-    link.download = "laporan-pembayaran-sekolah.csv";
-    link.click();
-    URL.revokeObjectURL(link.href);
-    setToast("Laporan berhasil diekspor.");
+    const schoolName = profile.foundation.trim() || profile.school.trim();
+    const meta = {
+      school: schoolName || "Laporan Pembayaran Sekolah",
+      // The year the report was filtered to, not the one the rest of the app
+      // happens to be showing — otherwise a spreadsheet of 2023/2024 would be
+      // headed "2026 / 2027" and quietly disagree with the rows beneath it.
+      academicYearLabel: reportYearLabel,
+      classFilter,
+      monthFilter,
+      printedAt: new Date().toLocaleString("id-ID"),
+    };
+    const slug = `${new Date().toISOString().slice(0, 10)}`;
+    // Include the scope in the filename: a treasurer exporting several years
+    // should not end up with a folder of identically named files.
+    const scopeSlug = reportYearLabel.replace(/[^0-9]+/g, "-");
+
+    try {
+      if (format === "csv") {
+        const { downloadReportCsv } = await import("./reportExport");
+        downloadReportCsv(
+          exportRows,
+          meta,
+          `laporan-pembayaran-${scopeSlug}-${slug}.csv`,
+        );
+        setToast("Laporan CSV berhasil diunduh.");
+      } else {
+        const { downloadReportXlsx } = await import("./reportExport");
+        await downloadReportXlsx(exportRows, meta);
+        setToast("Laporan Excel berhasil diunduh.");
+      }
+    } catch {
+      setToast("Ekspor gagal. Coba ulangi atau periksa izin unduhan browser.");
+    } finally {
+      setPdfLoading(false);
+    }
   }
   async function exportStudentReport(
     student: Student,
     mode: "download" | "print",
     printWindow?: Window | null,
   ) {
-    if (mode === "print") {
-      if (!printWindow) {
-        setToast("Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.");
-        return;
+    if (mode === "print" && !printWindow) {
+      setToast("Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.");
+      return;
+    }
+
+    // A student's report is a statement of everything they paid, so it is read
+    // from the server rather than from the capped portal feed. Without this a
+    // pupil with more than 100 payments would get a report that silently stops
+    // early and totals less than the arrears it is meant to explain.
+    setPdfLoading(true);
+    let studentTransactions: Transaction[];
+    try {
+      const result = await fetchPaymentReport({
+        academicYearId: effectiveYearId,
+        studentId: student.dbId,
+      });
+      studentTransactions = result.rows.map(toTransaction);
+      if (result.meta.truncated) {
+        setToast(
+          `Laporan ${student.name} melebihi batas baris server dan terpotong.`,
+        );
       }
+    } catch {
+      setPdfLoading(false);
+      printWindow?.close();
+      setToast(`Laporan ${student.name} gagal dimuat dari server. Coba lagi.`);
+      return;
+    }
+    setPdfLoading(false);
+
+    if (mode === "print") {
       try {
-        // Fetch logo sebagai data URL agar bisa tampil di window print baru
         const { fetchSchoolLogoDataUrl } = await import("./api");
         const logoDataUrl = await fetchSchoolLogoDataUrl();
-        
+
         printStudentReportPage({
-          printWindow,
+          printWindow: printWindow!,
           school: {
             ...profile,
             logo: schoolProfileQuery.data?.logo_path
@@ -1085,17 +1318,15 @@ function App() {
               : profile.logo,
           },
           student,
-          transactions: transactions.filter(
-            (transaction) => transaction.student === student.name,
-          ),
+          transactions: studentTransactions,
           academicYearLabel: academicYear,
           printedTime: new Date().toLocaleString("id-ID"),
           logoDataUrl,
-          user: currentUser ?? { name: "Petugas Keuangan", role: "admin" },
+          user: currentUser ?? { name: "Petugas Keuangan", role: "admin", nip: null },
         });
         setToast(`Laporan ${student.name} dibuka untuk dicetak.`);
       } catch {
-        printWindow.close();
+        printWindow?.close();
         setToast(`Laporan ${student.name} gagal dibuka untuk dicetak.`);
       }
       return;
@@ -1112,11 +1343,11 @@ function App() {
             : profile.logo,
         },
         student,
-        transactions,
+        transactions: studentTransactions,
         academicYearLabel: academicYear,
         mode: "download",
         printWindow,
-        user: currentUser ?? { name: "Petugas Keuangan", role: "admin" },
+        user: currentUser ?? { name: "Petugas Keuangan", role: "admin", nip: null },
       });
       setToast(
         `Laporan ${student.name} berhasil diunduh.`,
@@ -1247,6 +1478,9 @@ function App() {
           phone: profile.phone.trim() || null,
           email: profile.email.trim() || null,
           receipt_note: profile.note.trim() || null,
+          bank_name: profile.bankName.trim() || null,
+          bank_account_number: profile.bankAccountNumber.trim() || null,
+          bank_account_holder: profile.bankAccountHolder.trim() || null,
         });
       } catch (error) {
         setToast(
@@ -1262,6 +1496,9 @@ function App() {
         phone: saved.phone ?? "",
         email: saved.email ?? "",
         note: saved.receipt_note ?? "",
+        bankName: saved.bank_name ?? "",
+        bankAccountNumber: saved.bank_account_number ?? "",
+        bankAccountHolder: saved.bank_account_holder ?? "",
       }));
 
       try {
@@ -1362,6 +1599,37 @@ function App() {
       setCacheBusy(false);
     }
   }
+  /**
+   * Return the app to a signed-out, empty state.
+   *
+   * Clearing the token was never enough on its own. The mirrored school data
+   * lives in React state as well as localStorage, so after signing out, letting
+   * the session lapse, or a token being rejected, the next person to sign in on
+   * that browser was shown the previous account's students, transactions and
+   * school profile until their own requests came back — and kept seeing them if
+   * those requests failed.
+   */
+  function resetSignedInState(message?: string) {
+    // Read the caches *after* they have been removed, so this restores the empty
+    // defaults rather than the account that just signed out.
+    setStudents(initialStudents);
+    setTransactions(initialTransactions);
+    setProfile(readProfile());
+    setSppAmounts(initialSppRates);
+    queryClient.clear();
+    setCurrentUser(null);
+    setPage("dashboard");
+    setActiveTab("spp");
+    setReportMonth(0);
+    setReportClassId(null);
+    setReportYearOverride(null);
+    setCostClassId(null);
+    setSppDrafts({});
+    setCostDrafts({});
+    setCostToggles({});
+    if (message) setToast(message);
+  }
+
   async function handleLogout() {
     // Revoke the token server-side when possible, but never block the exit on it:
     // an offline or expired backend must still clear the local session.
@@ -1371,20 +1639,19 @@ function App() {
       /* ignore */
     }
     clearSessionActivity();
-    clearSession();
-    queryClient.clear();
-    setCurrentUser(null);
-    setPage("dashboard");
-    setActiveTab("spp");
+    // Silent: signing out is a deliberate act, and the announcement exists to
+    // explain the *unexpected* cases. Storage is still cleared, so other tabs
+    // still follow this one out.
+    purgeSession({ silent: true });
+    resetSignedInState();
   }
 
   /** Drop the session without a round trip, used when it expires. */
   function handleSessionExpired() {
     clearSessionActivity();
-    clearSession();
-    queryClient.clear();
-    setCurrentUser(null);
-    setPage("dashboard");
+    // Announced with the reason attached, because an idle sign-out should say
+    // why it happened rather than looking like an unexplained error.
+    purgeSession();
     setToast("Sesi berakhir karena tidak ada aktivitas. Silakan masuk kembali.");
   }
 
@@ -1533,12 +1800,17 @@ async function handlePhotoUpload(file: File) {
     }
   }
 
-  async function handleAccountSave(name: string, username: string, email: string) {
+  async function handleAccountSave(
+    name: string,
+    username: string,
+    email: string,
+    nip: string,
+  ) {
     if (accountBusy) return;
     setAccountBusy(true);
     setAccountError("");
     try {
-      const updated = await updateAccount({ name, username, email });
+      const updated = await updateAccount({ name, username, email, nip });
       storeSession(readToken() ?? "", updated);
       setCurrentUser(updated);
       setToast("Data akun berhasil diperbarui.");
@@ -1548,6 +1820,7 @@ async function handlePhotoUpload(file: File) {
         validationMessage(error, "username") ??
           validationMessage(error, "email") ??
           validationMessage(error, "name") ??
+          validationMessage(error, "nip") ??
           (isNetworkFailure(error)
             ? "Server tidak dapat dihubungi. Coba lagi beberapa saat."
             : "Data akun gagal disimpan."),
@@ -1585,25 +1858,25 @@ async function handlePhotoUpload(file: File) {
   }
 
   /*
-   * The full-screen splash is reserved for signing in.
+   * The splash covers signing in and the first data round that follows it.
    *
-   * It used to also cover `schoolProfileQuery` and `portalQuery`, but those are
-   * pending on every cold start — reopening a tab, reloading, restarting the app —
-   * so a routine refresh replaced the whole interface with a splash screen. The
-   * data they fetch is already mirrored into localStorage and used as the
-   * initial state above, so there is always something real to render: the last
-   * known numbers appear immediately and are corrected once the response lands.
+   * On a refresh those queries are pending too, but a reload already has the
+   * last-known figures mirrored in `localStorage`, so blanking the whole
+   * interface for them would be a regression — `bootingAfterLogin` is only set
+   * by an actual sign-in, which is the one moment there is nothing to draw yet.
    *
-   * Signing in is different. There is nothing to show beforehand, and dropping
-   * the pending state there would leave the button looking dead while the
-   * server is being contacted.
+   * `bootTimedOut` is the escape hatch. If the server is slow the app opens
+   * anyway rather than leaving the user staring at a spinner after they already
+   * proved they can log in.
    */
-  if (authLoading) {
+  const showBootSplash = authLoading || (bootingAfterLogin && !bootReady && !bootTimedOut);
+
+  if (showBootSplash) {
     return (
       <LoadingScreen
         school={profile.school}
         logo={profile.logo}
-        message="Memverifikasi akun"
+        message={authLoading ? "Memverifikasi akun" : pendingBootLabel}
       />
     );
   }
@@ -1690,6 +1963,10 @@ async function handlePhotoUpload(file: File) {
             // not at whatever timestamp a previous visit left behind.
             startSession();
             setCurrentUser(session.user);
+            // Hold the splash until the first data round lands, so the shell
+            // never appears with empty figures it would immediately replace.
+            setBootTimedOut(false);
+            setBootingAfterLogin(true);
             setPage("dashboard");
           } catch (error) {
             // A dead/unreachable backend looks identical to a bad password unless
@@ -1864,11 +2141,28 @@ async function handlePhotoUpload(file: File) {
           )}
           {effectivePage === "laporan" && (
             <ReportsPage
-              transactions={transactions}
-              students={students}
-              classLevels={classLevels}
-              reportClass={reportClass}
-              setReportClass={setReportClass}
+              rows={reportRows}
+              loading={paymentReportQuery.isLoading}
+              loadError={
+                paymentReportQuery.isError
+                  ? "Laporan gagal dimuat. Coba ubah filter atau muat ulang."
+                  : ""
+              }
+              truncated={paymentReportQuery.data?.meta.truncated ?? false}
+              classLevels={classLevelRows}
+              academicYearLabel={academicYear}
+              yearOptions={academicYears
+                .slice()
+                .sort((a, b) => b.start_year - a.start_year)
+                .map((year) => ({ id: year.id, name: year.name }))}
+              reportYearId={reportYearOverride}
+              setReportYearId={setReportYearOverride}
+              reportClassId={reportClassId}
+              setReportClassId={setReportClassId}
+              reportMonth={reportMonth}
+              setReportMonth={setReportMonth}
+              sections={reportSections}
+              setSections={setReportSections}
               onExport={exportReport}
               busy={pdfLoading}
             />
@@ -2046,6 +2340,9 @@ async function handlePhotoUpload(file: File) {
           setModal={setModal}
           profile={profile}
           receiptTransaction={receiptTransaction}
+          receiptClassName={students.find(
+            (student) => student.name === receiptTransaction.student,
+          )?.className}
           currentUser={currentUser}
         />
       )}

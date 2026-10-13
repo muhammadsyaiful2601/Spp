@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { Transaction } from './types'
 
 export const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000/api/v1'
 export const apiOrigin = new URL(apiBaseUrl, window.location.origin).origin
@@ -9,7 +10,9 @@ export type AuthUser = {
   email: string;
   role: "pimpinan" | "admin";
   username: string;
-  /** Storage-relative path of the avatar; null when the user has no photo. */
+  /** Employee number, printed in the signature block of receipts and reports. */
+  nip?: string | null;
+  /** Storage-relative path of the avatar; null when the account has no photo. */
   photo_path: string | null;
 }
 
@@ -83,6 +86,54 @@ export function clearSession(): void {
   }
 }
 
+/**
+ * Read-only snapshots mirrored into localStorage for a fast first paint.
+ *
+ * Kept here, next to the session keys, because these are account data: leaving
+ * them behind on sign-out is what let the next person to use the browser see the
+ * previous account's students and figures before their own data arrived.
+ */
+export const READ_CACHE_KEYS = [
+  "cendekia-students",
+  "cendekia-transactions",
+  "cendekia-profile",
+  "cendekia-spp-amounts",
+] as const
+
+/** Fired after a session is torn down so the running app can drop its state. */
+export const SESSION_PURGED_EVENT = "cendekia:session-purged"
+
+/**
+ * Remove everything tied to the signed-in account.
+ *
+ * `clearSession()` alone only dropped the token, leaving the mirrored data in
+ * storage and in the running app. Signing in as somebody else then rendered the
+ * previous account's students, transactions and school profile until their own
+ * data arrived — and kept showing them if those requests failed.
+ *
+ * `silent` covers a deliberate sign-out: storage is still cleared (so other tabs
+ * follow the token disappearing), but the app is told nothing here because it
+ * already knows why, and announcing it would greet a user who pressed "Keluar"
+ * with an "your session ended" warning.
+ */
+export function purgeSession(options: { silent?: boolean } = {}): void {
+  clearSession()
+  try {
+    const store = storage()
+    if (!store) return
+    for (const key of READ_CACHE_KEYS) {
+      store.removeItem(key)
+    }
+  } catch {
+    /* ignore */
+  }
+  // The token is gone from storage; the in-memory app has to hear about it too,
+  // because nothing else will re-render it out of the signed-in state.
+  if (!options.silent && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SESSION_PURGED_EVENT))
+  }
+}
+
 export const api = axios.create({
   baseURL: apiBaseUrl,
   headers: { Accept: 'application/json' },
@@ -93,13 +144,21 @@ api.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
-// A rejected token means the session is dead; drop it so the UI falls back to the
-// login screen instead of looping on failed requests.
+// A rejected token means the session is dead. Dropping only the token left the
+// app rendered as if still signed in, so every later request failed again and
+// the user saw a wall of errors instead of the login screen. Purge the whole
+// session and let the app reset itself.
+//
+// The sign-in call is excluded on purpose: wrong credentials answer 401 too, and
+// treating that as an expired session would wipe storage and greet a user who
+// merely mistyped their password with "your session ended".
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (axios.isAxiosError(error) && error.response?.status === 401) {
-      clearSession()
+    const isSignIn = typeof error?.config?.url === 'string'
+      && error.config.url.endsWith('/auth/login')
+    if (axios.isAxiosError(error) && error.response?.status === 401 && !isSignIn) {
+      purgeSession()
     }
     return Promise.reject(error)
   },
@@ -158,6 +217,8 @@ export async function updateAccount(input: {
   name: string
   username: string
   email: string
+  /** Empty string clears the NIP; the server treats it as null. */
+  nip?: string
 }): Promise<AccountDetails> {
   const { data } = await api.post<{ data: AccountDetails }>("/auth/profile", input)
   return data.data
@@ -320,6 +381,10 @@ export type PublicSchoolProfile = {
   receipt_note: string | null
   theme_primary: string
   theme_accent: string
+  /** Fixed payment account shown on receipts and reports. */
+  bank_name: string | null
+  bank_account_number: string | null
+  bank_account_holder: string | null
 }
 
 export type SchoolProfile = PublicSchoolProfile & {
@@ -364,6 +429,9 @@ export type SchoolProfileIdentity = {
   phone: string | null
   email: string | null
   receipt_note: string | null
+  bank_name: string | null
+  bank_account_number: string | null
+  bank_account_holder: string | null
 }
 
 /**
@@ -462,6 +530,75 @@ export type PortalTransaction = {
   status: string
   paid_at: string
   date: string
+}
+
+/** One row of the payment report; adds the class and ids the filters use. */
+export type PaymentReportRow = PortalTransaction & {
+  student_id: number
+  class_name: string
+}
+
+export type PaymentReportResult = {
+  rows: PaymentReportRow[]
+  meta: {
+    count: number
+    /** True when the server hit its safety cap — the report is not complete. */
+    truncated: boolean
+    limit: number
+    academic_year_id: number | null
+  }
+}
+
+/**
+ * Filters for the payment report. Omitted values mean "all", matching the
+ * server's own defaults (no month filter, no class filter, and the active
+ * academic year when no year is given).
+ */
+export type PaymentReportFilters = {
+  academicYearId?: number | null
+  classLevelId?: number | null
+  studentId?: number | null
+  month?: number | null
+}
+
+/**
+ * The payment report is read from the server rather than from the portal feed.
+ *
+ * The portal payload caps transactions at the 100 most recent ones because the
+ * dashboard only renders a short recent list. Reports are documents and must
+ * show every matching payment, so they ask for the full history here. That is
+ * why `truncated` is surfaced instead of being swallowed: if a report ever
+ * hits the server cap, the caller can say so rather than presenting a partial
+ * statement as if it were the whole one.
+ */
+export async function fetchPaymentReport(filters: PaymentReportFilters = {}): Promise<PaymentReportResult> {
+  const params: Record<string, string | number> = {}
+  if (filters.academicYearId) params.academic_year_id = filters.academicYearId
+  if (filters.classLevelId) params.class_level_id = filters.classLevelId
+  if (filters.studentId) params.student_id = filters.studentId
+  if (filters.month) params.month = filters.month
+
+  const { data } = await api.get<{
+    data: PaymentReportRow[]
+    meta: PaymentReportResult['meta']
+  }>('/reports/pembayaran', { params })
+
+  return { rows: data.data, meta: data.meta }
+}
+
+/** Map an API transaction row to the shape the tables and exports expect. */
+export function toTransaction(row: PortalTransaction): Transaction {
+  return {
+    id: row.number,
+    student: row.student,
+    detail: row.detail,
+    date: row.date,
+    amount: row.amount,
+    status: row.status,
+    paidAt: row.paid_at,
+    // Report rows join the student's class; portal rows do not carry it.
+className: "class_name" in row ? (row as PaymentReportRow).class_name : undefined,
+  };
 }
 
 export type PortalData = {

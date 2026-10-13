@@ -18,6 +18,7 @@ class SchoolProfile extends Model
     protected $fillable = [
         'school_name', 'foundation_name', 'address', 'phone', 'email', 'website',
         'logo_path', 'favicon_path', 'stamp_path', 'receipt_note', 'receipt_template',
+        'bank_name', 'bank_account_number', 'bank_account_holder',
         'theme_primary', 'theme_accent',
     ];
 }

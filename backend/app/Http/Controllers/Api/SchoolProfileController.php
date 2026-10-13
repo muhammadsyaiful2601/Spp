@@ -8,6 +8,7 @@ use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class SchoolProfileController extends Controller
 {
@@ -15,10 +16,13 @@ class SchoolProfileController extends Controller
     {
         // Branding only — every client (signed in or not) reads its identity,
         // colours, logo and favicon from here, so the whole white-label set
-        // must travel together or another device stays stale.
+        // must travel together or another device stays stale. The payment
+        // account rides along because receipts and reports are rendered on the
+        // client and cannot query the authenticated endpoints themselves.
         return response()->json(['data' => $this->profile()->only([
             'school_name', 'foundation_name', 'logo_path', 'favicon_path', 'address', 'phone', 'email', 'website',
             'receipt_note', 'theme_primary', 'theme_accent',
+            'bank_name', 'bank_account_number', 'bank_account_holder',
         ])]);
     }
 
@@ -53,7 +57,31 @@ class SchoolProfileController extends Controller
             'website' => ['nullable', 'url', 'max:255'],
             'receipt_note' => ['nullable', 'string', 'max:2000'],
             'receipt_template' => ['required', 'in:ringkas,standard,termal'],
+            // Digits only: the number is printed verbatim on receipts, so spaces
+            // and punctuation would have to be re-parsed by whoever pays.
+            'bank_name' => ['nullable', 'string', 'max:100'],
+            'bank_account_number' => ['nullable', 'string', 'max:50', 'regex:/^[0-9]+$/'],
+            'bank_account_holder' => ['nullable', 'string', 'max:150'],
+        ], [
+            'bank_account_number.regex' => 'Nomor rekening hanya boleh berisi angka.',
         ]);
+
+        // A receipt is only useful if the whole account is present, so the three
+        // fields are all-or-nothing: naming a bank without a number would print
+        // a payment instruction nobody can act on.
+        $provided = collect(['bank_name', 'bank_account_number', 'bank_account_holder'])
+            ->filter(fn (string $field) => filled($data[$field] ?? null));
+        if ($provided->isNotEmpty() && $provided->count() < 3) {
+            $missing = collect([
+                'bank_name' => 'Nama bank',
+                'bank_account_number' => 'Nomor rekening',
+                'bank_account_holder' => 'Nama pemilik rekening (A.N.)',
+            ])->reject(fn (string $label, string $field) => $provided->has($field))->values();
+
+            throw ValidationException::withMessages([
+                'bank_account_number' => 'Lengkapi '.implode(' dan ', $missing->all()).' untuk menyimpan rekening bank.',
+            ]);
+        }
 
         $profile = $this->profile();
         $profile->fill($data)->save();

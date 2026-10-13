@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Support\PaymentTransactionQuery;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -173,7 +174,7 @@ class DashboardController extends Controller
 
     private function transactions(): Collection
     {
-        return DB::table('payment_transactions')
+        return PaymentTransactionQuery::base()
             ->join('students', 'students.id', '=', 'payment_transactions.student_id')
             ->orderByDesc('payment_transactions.paid_at')
             ->limit(100)
@@ -184,17 +185,12 @@ class DashboardController extends Controller
                 'students.full_name as student_name',
             ])
             ->map(function ($transaction) {
-                $details = json_decode($transaction->details ?? '{}', true) ?: [];
-                $label = $transaction->type === 'spp'
-                    ? 'SPP · '.collect($details['months'] ?? [])->map(fn ($month) => $this->monthLabel((int) $month))->implode(', ')
-                    : ($details['position'] ?? 'Biaya lain');
-
                 return [
                     'id' => (int) $transaction->id,
                     'number' => $transaction->transaction_number,
                     'student' => $transaction->student_name,
                     'type' => $transaction->type,
-                    'detail' => $label,
+                    'detail' => PaymentTransactionQuery::describe($transaction->type, $transaction->details),
                     'amount' => (float) $transaction->amount,
                     'status' => 'Lunas',
                     'paid_at' => $transaction->paid_at,
@@ -314,27 +310,7 @@ class DashboardController extends Controller
 
     private function transactionsForYear(int $yearId)
     {
-        return DB::table('payment_transactions')
-            ->where(function ($query) use ($yearId) {
-                $query->where(function ($spp) use ($yearId) {
-                    $spp->where('payment_transactions.type', 'spp')
-                        ->whereIn('payment_transactions.reference_id', DB::table('spp_bills')
-                            ->select('id')->where('academic_year_id', $yearId));
-                })->orWhere(function ($nonSpp) use ($yearId) {
-                    $nonSpp->where('payment_transactions.type', 'non_spp')
-                        ->whereIn('payment_transactions.reference_id', DB::table('non_spp_bills')
-                            ->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')
-                            ->where('position_rates.academic_year_id', $yearId)
-                            ->select('non_spp_bills.id'));
-                });
-            });
-    }
-
-    private function monthLabel(int $month): string
-    {
-        $names = [1 => 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-
-        return $names[$month] ?? (string) $month;
+        return PaymentTransactionQuery::forAcademicYear($yearId);
     }
 
     private function relativeDate(?string $paidAt): string
