@@ -7,13 +7,16 @@ use App\Models\ActivityLog;
 use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Read-only view over the audit trail, for `pimpinan` only.
+ * View over the audit trail, for `pimpinan` only.
  *
- * The log is append-only: there is deliberately no create/update/delete route
- * here, because a trail the person being audited can edit is not a trail.
+ * The log is append-only: there is no create/update route here, because a trail
+ * the person being audited can edit is not a trail. Erasing the whole table is
+ * the single exception — see `destroy()` for why it exists and for the one thing
+ * it deliberately cannot remove.
  */
 class ActivityLogController extends Controller
 {
@@ -87,6 +90,44 @@ class ActivityLogController extends Controller
                 'by_category' => $byCategory,
             ],
             'categories' => $this->categories(),
+        ]);
+    }
+
+    /**
+     * Erase the whole audit trail.
+     *
+     * The table is written to by every mutation — roughly one to three rows per
+     * request — and was never given a retention job, so on a shared-hosting
+     * database it grows until the listing query starts to crawl. Trimming by age
+     * is not enough on its own because it still needs someone to press the
+     * button; this is the deliberate way out, and it is kept to `pimpinan`
+     * because that is the only role that reads the trail anyway.
+     *
+     * What this cannot do is leave no evidence. The deletion is recorded as a
+     * row of its own *after* the table is emptied, so "who emptied the log, when,
+     * and how much was in it" survives. An erasure that erased its own receipt
+     * would be indistinguishable from never having happened.
+     *
+     * There is no confirmation-by-value on the API side: the client already
+     * asks, and a second secret prompt would only mean the value gets logged
+     * somewhere else.
+     */
+    public function destroy(): JsonResponse
+    {
+        // Bulk delete rather than Eloquent's: no model events fire on this table
+        // by design, and `delete()` returns the affected count in one pass.
+        $deleted = DB::table('activity_logs')->delete();
+
+        ActivityLogger::record(
+            'akun.log_dibersihkan',
+            'akun',
+            "Menghapus seluruh log aktivitas ({$deleted} baris).",
+            ['meta' => ['deleted_rows' => $deleted]],
+        );
+
+        return response()->json([
+            'message' => "Log aktivitas berhasil dihapus ({$deleted} baris).",
+            'data' => ['deleted' => $deleted],
         ]);
     }
 

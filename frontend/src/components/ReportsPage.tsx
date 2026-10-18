@@ -339,7 +339,7 @@ export function ReportsPage({
                   <td className="amount-cell">{money(item.amount)}</td>
                   <td>
                     <span className="status-pill">
-                      <i /> Lunas
+                      <i /> {item.status}
                     </span>
                   </td>
                 </tr>

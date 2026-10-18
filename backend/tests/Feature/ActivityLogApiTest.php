@@ -187,17 +187,87 @@ class ActivityLogApiTest extends TestCase
         $this->assertGreaterThanOrEqual(2, $outside->json('summary.today'));
     }
 
-    public function test_the_log_has_no_write_or_delete_route(): void
+    public function test_the_log_still_refuses_to_be_edited(): void
     {
         $this->seed();
         $token = $this->tokenFor('pimpinan');
         $before = ActivityLog::query()->count();
 
-        foreach (['postJson', 'putJson', 'deleteJson'] as $method) {
-            $this->{$method}('/api/v1/pimpinan/log-aktivitas', [])->assertStatus(405);
+        // Creating and editing stay closed even though erasing is now allowed:
+        // the trail may only ever grow by being appended to.
+        foreach (['postJson', 'putJson', 'patchJson'] as $method) {
+            $this->withToken($token)
+                ->{$method}('/api/v1/pimpinan/log-aktivitas', [])
+                ->assertStatus(405);
         }
 
         $this->assertSame($before, ActivityLog::query()->count());
+    }
+
+    public function test_only_leadership_can_erase_the_log(): void
+    {
+        $this->seed();
+
+        // The treasurer role is refused here even though it can read most of
+        // the portal: clearing the audit trail is not a treasurer's call.
+        $this->withToken($this->tokenFor('admin'))
+            ->deleteJson('/api/v1/pimpinan/log-aktivitas')
+            ->assertForbidden();
+
+        $this->assertGreaterThan(0, ActivityLog::query()->count());
+    }
+
+    public function test_erasing_the_log_records_the_erasure_itself(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+
+        $before = ActivityLog::query()->count();
+        $this->assertGreaterThan(0, $before);
+
+        $response = $this->withToken($token)
+            ->deleteJson('/api/v1/pimpinan/log-aktivitas')
+            ->assertOk();
+
+        // The report counts what was actually there, not what is left after.
+        $this->assertSame($before, $response->json('data.deleted'));
+
+        // Everything that existed is gone...
+        $remaining = ActivityLog::query()->get();
+        $this->assertCount(1, $remaining);
+        $this->assertSame('akun.log_dibersihkan', $remaining[0]->action);
+
+        // ...and the one row left is the receipt. An erasure that also removed its
+        // own receipt would be indistinguishable from never having happened, so
+        // this single row is the part the feature deliberately cannot remove.
+        $this->assertSame('pimpinan', $remaining[0]->actor_username);
+        $this->assertSame($before, $remaining[0]->meta['deleted_rows']);
+        $this->assertStringContainsString((string) $before, $remaining[0]->description);
+
+        // And it reads back through the normal endpoint, not just the table.
+        $listed = $this->withToken($token)
+            ->getJson('/api/v1/pimpinan/log-aktivitas')
+            ->assertOk();
+        $this->assertSame(1, $listed->json('meta.total'));
+        $this->assertSame('akun.log_dibersihkan', $listed->json('data.0.action'));
+    }
+
+    public function test_erasing_the_log_is_rate_limited(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('pimpinan');
+
+        $erased = 0;
+        for ($attempt = 0; $attempt < 6; $attempt++) {
+            $response = $this->withToken($token)->deleteJson('/api/v1/pimpinan/log-aktivitas');
+            if ($response->status() === 429) {
+                break;
+            }
+            $response->assertOk();
+            $erased++;
+        }
+
+        $this->assertLessThan(6, $erased, 'Delete should have been throttled before six attempts.');
     }
 }
 

@@ -65,12 +65,84 @@ return new class extends Migration
         }
     }
 
+    /**
+     * Remove only what this migration inserted.
+     *
+     * The original version issued five unfiltered `delete()` calls. That was not
+     * merely untidy: `spp_bills.academic_year_id` cascades on delete, so a
+     * single `migrate:rollback` on a live database wiped every bill, left
+     * `payment_transactions` pointing at rows that no longer existed, and made
+     * every money figure resolve to zero with nothing logged about it.
+     *
+     * So the rollback is scoped to this migration's own rows, and it refuses
+     * outright once the school has real data attached to them. Refusing loudly
+     * beats silently destroying a ledger.
+     */
     public function down(): void
     {
-        DB::table('spp_periods')->delete();
-        DB::table('position_rates')->delete();
-        DB::table('payment_positions')->delete();
-        DB::table('class_levels')->delete();
-        DB::table('academic_years')->delete();
+        $yearId = DB::table('academic_years')->where('name', '2026/2027')->value('id');
+
+        if ($yearId !== null) {
+            // `spp_bills` is the one dependency that cascades, so it is the one
+            // that can vanish without anyone asking.
+            $inUse = DB::table('spp_bills')->where('academic_year_id', $yearId)->exists()
+                || DB::table('students')->exists()
+                || DB::table('payment_transactions')->exists();
+
+            if ($inUse) {
+                throw new RuntimeException(
+                    'Rollback ditolak: tahun ajaran 2026/2027 sudah dipakai oleh data sekolah '
+                    .'(siswa, tagihan, atau transaksi). Hapus data tersebut secara sadar bila '
+                    .'memang diperlukan, lalu jalankan ulang. Migration ini tidak boleh '
+                    .'menghapus riwayat keuangan.'
+                );
+            }
+
+            DB::table('spp_periods')->where('academic_year_id', $yearId)->delete();
+            DB::table('position_rates')->where('academic_year_id', $yearId)->delete();
+        }
+
+        // `payment_positions` and `class_levels` carry no year, so they are
+        // matched on the exact keys this migration wrote rather than wiped
+        // wholesale.
+        //
+        // A position is only removed when no rate survives for it. The scoped
+        // `position_rates` delete above already cleared this year's rates, so
+        // anything still pointing at a position is later-year configuration and
+        // must survive. `non_spp_bills` hangs off `position_rates`, and those
+        // have a `restrictOnDelete` foreign key, which turns a mistake into a
+        // loud failure instead of a silent loss.
+        DB::table('payment_positions')
+            ->whereIn('name', ['Uang Pendaftaran', 'Uang Kegiatan', 'Uang Pembangunan', 'Uang Perpisahan', 'Seragam dan Perlengkapan'])
+            ->whereNotExists(
+                fn ($query) => $query->select(DB::raw(1))
+                    ->from('position_rates')
+                    ->whereColumn('position_rates.payment_position_id', 'payment_positions.id')
+            )
+            ->delete();
+
+        // A class level is referenced by `students`, `spp_periods` and
+        // `position_rates`, and the latter two cascade on delete. Checking only
+        // `students` was not enough: with no pupils enrolled, dropping a level
+        // silently took a later year's rates and periods with it.
+        DB::table('class_levels')
+            ->whereIn('name', ['Kelas I', 'Kelas II', 'Kelas III', 'Kelas IV', 'Kelas V', 'Kelas VI'])
+            ->whereNotExists(
+                fn ($query) => $query->select(DB::raw(1))->from('students')
+                    ->whereColumn('students.class_level_id', 'class_levels.id')
+            )
+            ->whereNotExists(
+                fn ($query) => $query->select(DB::raw(1))->from('position_rates')
+                    ->whereColumn('position_rates.class_level_id', 'class_levels.id')
+            )
+            ->whereNotExists(
+                fn ($query) => $query->select(DB::raw(1))->from('spp_periods')
+                    ->whereColumn('spp_periods.class_level_id', 'class_levels.id')
+            )
+            ->delete();
+
+        if ($yearId !== null) {
+            DB::table('academic_years')->where('id', $yearId)->delete();
+        }
     }
 };

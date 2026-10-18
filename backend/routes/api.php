@@ -44,11 +44,28 @@ Route::prefix('v1')->group(function () {
         // verify an address it never controlled. Same budget as login.
         Route::post('/auth/verification/verify', [VerificationController::class, 'verifyCode'])->middleware('throttle:10,1');
 
+        // The verification screen renders the full branding row, which carries
+        // `stamp_path` and `receipt_template` — fields the public endpoint
+        // deliberately omits — so this read has to stay reachable while the
+        // address is unconfirmed.
+        //
+        // It is the ONLY school-profile route outside `verified`, and that
+        // placement is the whole point. The gate used to be bypassed through a
+        // prefix entry in EnsureEmailVerified, which matched this GET *and*
+        // every write beneath it: an unverified account could rewrite the bank
+        // account printed on every receipt. Declaring the read here, behind its
+        // own role check, keeps the gate closed by default instead.
+        Route::middleware('role:pimpinan')->get(
+            '/pimpinan/sekolah-profile',
+            [SchoolProfileController::class, 'show'],
+        );
+
         // Everything below needs a verified address. The middleware keeps the
         // account/profile/verification endpoints above reachable.
         Route::middleware('verified')->group(function () {
             Route::prefix('pimpinan')->middleware('role:pimpinan')->group(function () {
-                Route::get('/sekolah-profile', [SchoolProfileController::class, 'show']);
+                // The read lives above, outside `verified`. Nothing else about
+                // this resource may be reached without a confirmed address.
                 Route::post('/sekolah-profile', [SchoolProfileController::class, 'update']);
                 Route::post('/sekolah-profile/upload-logo', [SchoolProfileController::class, 'uploadLogo']);
                 Route::post('/sekolah-profile/upload-stempel', [SchoolProfileController::class, 'uploadStamp']);
@@ -56,7 +73,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('/sekolah-profile/theme', [SchoolProfileController::class, 'updateTheme']);
                 Route::delete('/sekolah-profile/favicon', [SchoolProfileController::class, 'deleteFavicon']);
                 Route::post('/tahun-ajaran', [AcademicYearController::class, 'store']);
-                Route::post('/tahun-ajaran/{year}/aktifkan', [AcademicYearController::class, 'activate']);
+                Route::post('/tahun-ajaran/{year}/aktifkan', [AcademicYearController::class, 'activate'])->whereNumber('year');
                 Route::get('/bendahara', [TreasurerController::class, 'index']);
                 Route::post('/bendahara', [TreasurerController::class, 'store']);
                 // Bind on `id` only: an unresolvable id must 404, not hit the model.
@@ -64,8 +81,15 @@ Route::prefix('v1')->group(function () {
                 Route::post('/bendahara/{treasurer}/password', [TreasurerController::class, 'resetPassword'])->whereNumber('treasurer');
                 Route::post('/bendahara/{treasurer}/status', [TreasurerController::class, 'setActive'])->whereNumber('treasurer');
                 Route::delete('/bendahara/{treasurer}', [TreasurerController::class, 'destroy'])->whereNumber('treasurer');
-                // Audit trail. Read-only by design: the log has no write route.
+                // Audit trail. Append-only by design: nothing can create or edit a
+                // row. The one exception is erasing the lot, which exists because
+                // the table grows without bound and was never given a retention
+                // job. The erasure records itself, so this route cannot be used to
+                // leave no trace. Throttled like the other destructive
+                // `pimpinan` actions so a double-click cannot repeat it.
                 Route::get('/log-aktivitas', [ActivityLogController::class, 'index']);
+                Route::delete('/log-aktivitas', [ActivityLogController::class, 'destroy'])
+                    ->middleware('throttle:5,1');
                 Route::get('/backup-database', [MaintenanceController::class, 'backup'])
                     ->middleware('throttle:5,1');
                 Route::post('/bersihkan-cache', [MaintenanceController::class, 'clearCache'])
@@ -96,7 +120,7 @@ Route::prefix('v1')->group(function () {
             Route::prefix('admin')->middleware('role:pimpinan,admin')->group(function () {
                 Route::get('/siswa', [StudentController::class, 'index']);
                 Route::post('/siswa', [StudentController::class, 'store']);
-                Route::get('/siswa/{student}/tagihan', [StudentController::class, 'bills']);
+                Route::get('/siswa/{student}/tagihan', [StudentController::class, 'bills'])->whereNumber('student');
                 Route::get('/siswa/{student}/transaksi', [PaymentController::class, 'transactions'])->whereNumber('student');
                 Route::post('/pembayaran/spp', [PaymentController::class, 'paySpp']);
                 Route::post('/pembayaran/non-spp', [PaymentController::class, 'payNonSpp']);

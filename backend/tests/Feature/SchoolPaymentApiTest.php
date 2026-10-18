@@ -265,12 +265,105 @@ class SchoolPaymentApiTest extends TestCase
             ->assertUnprocessable()->assertJsonValidationErrors('academic_year_id');
     }
 
+    /**
+     * A student created here must come back through the portal feed with its
+     * primary key attached.
+     *
+     * The "Tambah siswa" button used to invent the row in the browser instead of
+     * calling this endpoint, which meant the student vanished on the next portal
+     * refetch and could never be paid against: `dbId` is what every payment and
+     * bill lookup needs, and a locally constructed object has none. This asserts
+     * the round trip that makes the button work.
+     */
+    public function test_a_new_student_is_created_and_immediately_payable(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+
+        $levelId = DB::table('class_levels')->orderBy('sort_order')->value('id');
+        $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+
+        $created = $this->withToken($token)->postJson('/api/v1/admin/siswa', [
+            'nisn' => '0099887766',
+            'student_number' => '2601001',
+            'full_name' => 'Siswa Baru Daftar',
+            'class_level_id' => $levelId,
+        ])->assertCreated();
+
+        // The primary key has to be real: it is what the payment endpoints key on.
+        $studentId = (int) $created->json('data.id');
+        $this->assertGreaterThan(0, $studentId);
+        $this->assertDatabaseHas('students', [
+            'id' => $studentId,
+            'nisn' => '0099887766',
+            'full_name' => 'Siswa Baru Daftar',
+        ]);
+
+        // And it reaches the portal feed the dashboard renders from.
+        $portal = $this->withToken($token)
+            ->getJson('/api/v1/data/portal?academic_year_id='.$yearId)
+            ->assertOk();
+        $this->assertNotNull(
+            collect($portal->json('data.students'))->firstWhere('nisn', '0099887766'),
+            'Siswa yang baru dibuat harus muncul di data portal.',
+        );
+
+        // The bills endpoint the payment modal opens on must accept the new id.
+        $this->withToken($token)
+            ->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
+            ->assertOk();
+    }
+
+    public function test_student_creation_rejects_duplicate_identifiers(): void
+    {
+        $this->seed();
+        $token = $this->tokenFor('admin');
+        $levelId = DB::table('class_levels')->orderBy('sort_order')->value('id');
+
+        DB::table('students')->insert([
+            'nisn' => '0011223344',
+            'student_number' => '2601002',
+            'full_name' => 'Siswa Kembar',
+            'class_level_id' => $levelId,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->withToken($token)->postJson('/api/v1/admin/siswa', [
+            'nisn' => '0011223344',
+            'student_number' => '2601002',
+            'full_name' => 'Duplikat',
+            'class_level_id' => $levelId,
+        ])->assertStatus(422)->assertJsonValidationErrors(['nisn', 'student_number']);
+    }
+
     /** The report is financial data: it must never answer an anonymous caller. */
     public function test_payment_report_requires_authentication(): void
     {
         $this->seed();
 
         $this->getJson('/api/v1/reports/pembayaran')->assertUnauthorized();
+    }
+
+    /**
+     * Regression: a tokenless request must answer 401 whatever it asks for.
+     *
+     * `Authenticate::unauthenticated()` only asks the redirect callback for a
+     * target when the request does NOT expect JSON, and this application has no
+     * `login` route — the SPA owns that screen. The framework default therefore
+     * resolved `route('login')` and threw RouteNotFoundException, so anything
+     * arriving with `Accept: text/html` (a pasted API URL, a browser error page)
+     * got a 500 and a stack trace in the log instead of an honest 401.
+     */
+    public function test_a_tokenless_request_answers_401_even_when_it_does_not_ask_for_json(): void
+    {
+        $this->seed();
+
+        foreach (['*/*', 'text/html'] as $accept) {
+            $this->get('/api/v1/reports/pembayaran', ['Accept' => $accept])
+                ->assertUnauthorized();
+        }
     }
 
     public function test_admin_can_pay_multiple_spp_months_and_retrieve_receipt(): void
@@ -423,7 +516,71 @@ class SchoolPaymentApiTest extends TestCase
         $this->assertEquals($initial['spp_arrears'], $afterBillsCreated['spp_arrears']);
     }
 
-    public function test_portal_includes_remaining_non_spp_bills_in_each_student_arrears(): void
+    /**
+ * The printed report and the dashboard must not describe the same year with two
+ * different numbers.
+ *
+ * `non_spp_bills` carries no year column — the year lives on `position_rates`.
+ * Summing the bills table bare reported every outstanding charge ever raised,
+ * while the SPP figure beside it was correctly scoped, so the arrears on a
+ * printed report drifted away from the screen as soon as a second year existed.
+ */
+public function test_dashboard_stats_scope_non_spp_arrears_to_the_requested_year(): void
+{
+    $this->seed();
+    $token = $this->tokenFor('pimpinan');
+
+    $yearId = DB::table('academic_years')->where('is_active', true)->value('id');
+    $levelId = DB::table('class_levels')->orderBy('sort_order')->value('id');
+    $studentId = $this->makeStudent('2401666', '8877665544', 1, 0);
+
+    // A charge belonging to a *different* year, which the report must ignore.
+    $laterYearId = DB::table('academic_years')->insertGetId([
+        'name' => '2027/2028', 'start_year' => 2027, 'end_year' => 2028,
+        'is_active' => false, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $positionId = DB::table('payment_positions')->orderBy('id')->value('id');
+    $laterRateId = DB::table('position_rates')->insertGetId([
+        'payment_position_id' => $positionId, 'academic_year_id' => $laterYearId,
+        'class_level_id' => $levelId, 'amount' => 900000,
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    // This year's own outstanding charge.
+    $currentRateId = DB::table('position_rates')
+        ->where('academic_year_id', $yearId)
+        ->where('class_level_id', $levelId)
+        ->orderBy('id')
+        ->value('id');
+    DB::table('non_spp_bills')->insert([
+        'student_id' => $studentId, 'position_rate_id' => $currentRateId,
+        'amount_due' => 120000, 'amount_paid' => 20000, 'status' => 'sebagian',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    // And the next year's, which belongs to no year the report was asked about.
+    DB::table('non_spp_bills')->insert([
+        'student_id' => $studentId, 'position_rate_id' => $laterRateId,
+        'amount_due' => 900000, 'amount_paid' => 0, 'status' => 'belum_bayar',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $report = $this->withToken($token)
+        ->getJson("/api/v1/reports/dashboard-stats?academic_year_id={$yearId}")
+        ->assertOk();
+
+    // 100.000 for this year only — not 1.000.000, which is the whole table.
+    $this->assertEquals(100000, (float) $report->json('data.non_spp_arrears'));
+    $this->assertLessThan(900000, (float) $report->json('data.non_spp_arrears'));
+
+    // An unknown year must be refused outright rather than answered with
+    // lifetime figures, which is what an unvalidated id used to produce.
+    $this->withToken($token)
+        ->getJson('/api/v1/reports/dashboard-stats?academic_year_id=999999')
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('academic_year_id');
+}
+
+public function test_portal_includes_remaining_non_spp_bills_in_each_student_arrears(): void
     {
         $this->seed();
         $token = $this->postJson('/api/v1/auth/login', [
@@ -2291,14 +2448,14 @@ public function test_admin_can_change_tariffs(): void
     // --- Email verification gate ----------------------------------------------
 
     /** Create an account that still has to verify its address. */
-    private function unverifiedUser(string $username = 'baru'): array
+    private function unverifiedUser(string $username = 'baru', string $role = 'admin'): array
     {
         $id = (int) DB::table('users')->insertGetId([
             'name' => 'Pengguna Baru',
             'username' => $username,
             'email' => $username.'@example.test',
             'password' => Hash::make('password'),
-            'role' => 'admin',
+            'role' => $role,
             'email_verified_at' => null,
             'created_at' => now(),
             'updated_at' => now(),
@@ -2496,6 +2653,43 @@ public function test_admin_can_change_tariffs(): void
             ->assertOk();
     }
 
+    public function test_password_reset_refuses_to_reuse_the_current_password(): void
+    {
+        $this->seed();
+        Notification::fake();
+
+        $token = $this->postJson('/api/v1/auth/forgot-password', ['email' => 'admin@example.test'])
+            ->assertOk()
+            ->json('data.dev_code');
+
+        // The seeded account still uses "password", so handing it back is a
+        // non-change: the old password keeps working while the owner walks away
+        // believing it was replaced.
+        $this->postJson('/api/v1/auth/reset-password', [
+            'token' => $token,
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('password');
+
+        // The stored hash is untouched and the code survives the refusal, so the
+        // user can retype a different password instead of requesting a new link.
+        $this->assertTrue(Hash::check('password', User::where('username', 'admin')->value('password')));
+        $this->assertSame(
+            1,
+            DB::table('password_reset_tokens')->where('email', 'admin@example.test')->count(),
+        );
+
+        $this->postJson('/api/v1/auth/reset-password', [
+            'token' => $token,
+            'password' => 'katabaru123',
+            'password_confirmation' => 'katabaru123',
+        ])->assertOk();
+
+        $this->assertTrue(Hash::check('katabaru123', User::where('username', 'admin')->value('password')));
+    }
+
     public function test_reset_email_carries_the_link_to_the_reset_page(): void
     {
         $this->seed();
@@ -2514,9 +2708,23 @@ public function test_admin_can_change_tariffs(): void
             parse_str((string) parse_url($mail->actionUrl, PHP_URL_QUERY), $query);
             $this->assertSame(64, strlen($query['kode'] ?? ''));
 
-            // The plaintext code is still printed for mail clients that do not
-            // render links, so the manual-entry fallback never breaks.
-            $this->assertStringContainsString($query['kode'], implode("\n", $mail->introLines));
+            // `s` is the deadline the reset screen counts down to. It only has to
+            // match the configured lifetime from the moment the link was minted;
+            // the endpoint derives the authoritative expiry from the stored row.
+            $this->assertSame(
+                now()->addMinutes(config('auth.passwords.users.expire', 60))->timestamp,
+                (int) ($query['s'] ?? 0),
+            );
+
+            // The code must not also appear as body text. It used to, for mail
+            // clients that do not render links, but there is no field to type it
+            // into any more — and a token sitting in the message body outlives
+            // the 60-minute expiry in every preview, index and forward that
+            // keeps a copy of it.
+            $this->assertStringNotContainsString(
+                $query['kode'],
+                implode("\n", array_merge($mail->introLines, $mail->outroLines)),
+            );
 
             return true;
         });
@@ -2837,5 +3045,71 @@ public function test_admin_can_change_tariffs(): void
         ])->assertStatus(422)->assertJsonValidationErrors('email');
 
         $this->assertSame('bawaan@example.test', DB::table('users')->where('username', 'bawaan')->value('email'));
+    }
+
+    /**
+     * Regression: an unverified leadership account must not be able to rewrite
+     * the school profile.
+     *
+     * The verification gate used to be bypassed through a *prefix* allowance
+     * entry covering the school-profile routes. A prefix matches every route
+     * beneath it, so the read the verification screen needs and every write
+     * under it were let through alike: an account that had never confirmed its
+     * address could POST a new bank account number, and that number is printed
+     * on every receipt and report.
+     *
+     * The read must stay available, otherwise nobody could become verified at
+     * all. The writes must not.
+     */
+    public function test_unverified_leadership_can_read_the_school_profile_but_not_write_it(): void
+    {
+        $this->seed();
+
+        // The leadership account is "the seeded user that is not a treasurer",
+        // so this test carries no hardcoded role spelling to drift out of sync.
+        $leader = DB::table('users')->where('role', '!=', 'admin')->first();
+        $this->assertNotNull($leader, 'Seeded leadership account is missing.');
+
+        DB::table('school_profiles')->updateOrInsert([], [
+            'school_name' => 'SD Asli',
+            'address' => '-',
+            'receipt_template' => 'standard',
+            'bank_account_number' => '0071234567',
+            'bank_account_holder' => 'Yayasan Asli',
+        ]);
+
+        [, $token] = $this->unverifiedUser('pemimpin_baru', $leader->role);
+        $base = '/api/v1/'.$leader->role.'/sekolah-profile';
+
+        // Reading is allowed: the verification screen renders this row.
+        $this->withToken($token)->getJson($base)
+            ->assertOk()
+            ->assertJsonPath('data.bank_account_number', '0071234567');
+
+        // Writing is not.
+        $this->withToken($token)->postJson($base, [
+            'school_name' => 'SD Attacker',
+            'address' => '-',
+            'receipt_template' => 'standard',
+            'bank_account_number' => '9999999999',
+            'bank_account_holder' => 'Penyerang',
+        ])
+            ->assertForbidden()
+            ->assertJsonPath('code', 'email_unverified');
+
+        $this->withToken($token)->postJson($base.'/theme', [
+            'theme_primary' => '#ff0000', 'theme_accent' => '#00ff00',
+        ])->assertForbidden()->assertJsonPath('code', 'email_unverified');
+
+        $this->withToken($token)->deleteJson($base.'/favicon')->assertForbidden();
+
+        $this->withToken($token)->post($base.'/upload-logo', [
+            'logo' => UploadedFile::fake()->image('logo.png'),
+        ])->assertForbidden();
+
+        // Nothing above may have touched the row.
+        $this->assertSame('0071234567', DB::table('school_profiles')->value('bank_account_number'));
+        $this->assertNotSame('#ff0000', DB::table('school_profiles')->value('theme_primary'));
+        $this->assertNull(DB::table('school_profiles')->value('logo_path'));
     }
 }

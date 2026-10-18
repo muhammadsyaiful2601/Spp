@@ -18,13 +18,12 @@ export function ProfilePage({
   onSave,
   profileBusy,
   verification,
-  /**
-   * Only `pimpinan` may see or touch branding. When false the logo, favicon
-   * and theme sections are hidden entirely (not just disabled) so `admin`
-   * never sees controls they must not use, and can verify their email on
-   * this screen without confusion.
-   */
-  canEditBranding = true,
+/**
+ * Only `p manoeuvre` may see branding at all. When false the identity form and
+ * the receipt preview are not rendered, so an `admin` sees only the
+ * verification card and never a control they are not allowed to use.
+ */
+canEditBranding = true,
 }: {
   profile: Profile;
   setProfile: React.Dispatch<React.SetStateAction<Profile>>;
@@ -52,7 +51,9 @@ export function ProfilePage({
   return (
     <div className="profile-layout">
       {verification}
-      <section className="panel profile-form">
+      {canEditBranding && (
+        <>
+          <section className="panel profile-form">
         <div className="panel-heading">
           <div>
             <h2>Identitas sekolah</h2>
@@ -60,11 +61,6 @@ export function ProfilePage({
           </div>
           <Building2 size={20} />
         </div>
-        {!canEditBranding && (
-          <p className="form-error">Hanya pimpinan yang dapat mengubah identitas sekolah.</p>
-        )}
-        <fieldset disabled={!canEditBranding} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-        {canEditBranding && (
         <div className="branding-block">
         <div className="logo-field">
           <div className="logo-preview">
@@ -254,9 +250,7 @@ export function ProfilePage({
             </div>
           </div>
         </div>
-
         </div>
-        )}
         <div className="form-grid">
           <div className="form-field full">
             <label htmlFor="profile-school">Nama Sistem</label>
@@ -406,7 +400,6 @@ export function ProfilePage({
             {profileBusy ? "Menyimpan" : "Simpan profil"}
           </button>
         </div>
-        </fieldset>
       </section>
       <aside className="profile-aside">
         <div className="preview-label">
@@ -467,6 +460,8 @@ export function ProfilePage({
           </span>
         </div>
       </aside>
+        </>
+      )}
     </div>
   );
 }

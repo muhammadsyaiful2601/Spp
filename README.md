@@ -2,10 +2,43 @@
 
 Implementasi awal aplikasi pembayaran SPP dan biaya sekolah: React + Vite SPA di `frontend/` dan Laravel REST API + Sanctum di `backend/`.
 
+## Dua file .env, satu untuk koneksi, satu untuk rahasia
+
+Proyek ini memakai dua file environment, sengaja dipisah berdasarkan
+sensivitasnya:
+
+| File | Isi | Ikut git? |
+| --- | --- | --- |
+| `.env` (root) | **Hanya alamat** yang menyambungkan portal dengan API: `APP_URL`, `FRONTEND_URL`, `VITE_API_URL`, `CORS_ALLOWED_ORIGINS`, `VITE_SESSION_IDLE_MINUTES` | **Ya** — aman dipublikasikan |
+| `backend/.env` | **Semua rahasia**: `APP_KEY`, password database, `MAIL_PASSWORD`, pengirim email | **Tidak** — hanya di mesin/server Anda |
+
+Kedua sisi membaca keduanya: Vite diarahkan ke root lewat `envDir` di
+`frontend/vite.config.ts`, dan `backend/bootstrap/app.php` memuat root `.env`
+lebih dulu lalu membiarkan `backend/.env` melengkapinya. Karena repositori
+Dotenv bersifat immutable, nilai di root menang bila nama kuncinya sama — jadi
+root benar-benar menjadi sumber untuk pengaturan koneksi.
+
+### Tidak ada file per-env di frontend
+
+Tidak ada `frontend/.env.local` lagi. Nilai yang tadinya ada di sana dipindah ke
+root `.env`. Kalau `frontend/.env.local` masih ada, Vite mengabaikannya karena
+`envDir` sudah diarahkan ke root — jadi beware file itu perlu dihapus agar tidak
+menyesatkan.
+
+### MengEnvironment di hosting
+
+Setelah `git clone`, Anda hanya perlu:
+
+1. Edit `.env` di root: ganti lima alamat di dalamnya dengan domain Anda.
+2. Buat `backend/.env` **sekali** dengan nilai rahasia server (panduan lengkap
+   ada di [CPANEL.md](CPANEL.md)).
+3. Bangun frontend **setelah** `VITE_API_URL` benar, karena nilai `VITE_`
+   dibekukan saat build.
+
 ## Menjalankan aplikasi
 
-> **Penting:** port backend dan `VITE_API_URL` harus sama persis. Default
-> `php artisan serve` memakai **8000**.
+> **Penting:** port backend dan `VITE_API_URL` di root `.env` harus sama persis.
+> Default `php artisan serve` memakai **8000**.
 
 Terminal 1:
 
@@ -20,12 +53,67 @@ Terminal 2:
 
 ```powershell
 cd frontend
-Copy-Item .env.example .env.local   # VITE_API_URL=http://127.0.0.1:8000/api/v1
-npm run dev
+npm run dev                  # VITE_API_URL dibaca dari .env di root
 ```
 
 Buka `http://localhost:5173`. Frontend mengambil branding publik dan seluruh data
 siswa, tagihan, transaksi, tarif, serta tema dari API.
+
+### Queue worker wajib berjalan
+
+Email peringatan "apakah Anda baru masuk?" dikirim lewat antrean, bukan di
+dalam permintaan login. Alasannya nyata: mengirimnya inline membuat login
+menunggu satu percakapan SMTP penuh (connect, EHLO, STARTTLS, AUTH, MAIL, DATA),
+dan relay yang lambat mendorong respons melewati batas kesabaran browser sehingga
+login gagal dengan pesan "Server tidak dapat dihubungi" padahal server-nya
+sehat. Di queue, login selesai begitu token terbit.
+
+Konsekuensinya: **tanpa worker, email peringatan tidak pernah terkirim.** Yang
+tetap jalan penuh adalah verifikasi email dan atur ulang kata sandi, karena keduanya
+sudah dipanggil langsung, bukan melalui antrean.
+
+```powershell
+cd backend
+php artisan queue:work            # Terminal 3, biarkan berjalan
+```
+
+Untuk produksi, jalankan lewat cron (lihat [CPANEL.md](CPANEL.md)):
+
+```
+* * * * * cd /path/ke/backend && php artisan queue:work --stop-when-empty --tries=1 >> /dev/null 2>&1
+```
+
+### Timeout
+
+`frontend/src/api.ts` menunggu 30 detik per permintaan (`VITE_API_TIMEOUT_MS`).
+Dulu 8 detik, dan itu terlalu rapat untuk pekerjaan yang memang butuh waktu
+(laporan satu tahun pembayaran, backup database). Pelaporan 429/terjauh berbeda
+juga: timeout sekarang diberi pesan sendiri, bukan lagi disuruhwbrrestart
+backend yang berjalan baik-baik saja.
+
+`backend/.env`: `MAIL_TIMEOUT_SECONDS=5` membatasi tiap operasi socket SMTP.
+Nilainya **per operasi**, bukan untuk seluruh percakapan, jadi percakapan yang
+buruk tetap bisa makan waktu lama — itulah sebabnya emailnya dipindahkan ke queue
+bukan sekadar diberi timeout.
+
+### Jangan set `PHP_CLI_SERVER_WORKERS`
+
+Kita pernah mencoba mengaturnya untuk menangani beberapa permintaan sekaligus
+di `php artisan serve`. **Jangan.** Alasannya:
+
+- Server bawaan PHP hanya membuat worker di sistem POSIX. Di Windows (Laragon)
+  variabel ini diabaikan; diuji langsung, tetap **satu** proses.
+- Laravel juga mencantumkan peringatan
+  `Unable to respect the PHP_CLI_SERVER_WORKERS environment variable without the
+  --no-reload flag`, dan setelah diabaikan hanya tersisa satu server.
+- Di produksi `php artisan serve` sama sekali tidak dipakai. Document root
+  dilayani Apache/PHP-FPM, yang sudah menangani banyak permintaan lewat
+  `pm.max_children`. Menambahkannya hanya menambah satu warning.
+
+Penyebab utama login lambat setelah logout memang **bukan** jumlah worker, melainkan
+email peringatan masuk yang dikirim di dalam permintaan login; itu sudah dihilangkan
+dengan queue. Setelah queue aktif, login selesai sekitar 1 detik walau ada banyak
+request lain yang berlomba.
 
 ### Jika tidak bisa login
 
@@ -536,7 +624,7 @@ Detail yang disengaja:
 - `logoutApi()` dibungkus `try/catch` supaya **server mati tidak menghalangi keluar** — sesi lokal tetap dibersihkan.
 - `startSession()` dipanggil saat login, sehingga hitungan mulai dari saat masuk, bukan dari timestamp kunjungan sebelumnya.
 
-Batas idle: **15 menit**, diatur lewat `VITE_SESSION_IDLE_MINUTES` di `.env.local`. Nilai yang bukan angka positif **jatuh ke 15 menit**, bukan mematikan timeout — konfigurasi salah tidak boleh membuka akses tanpa batas.
+Batas idle: **15 menit**, diatur lewat `VITE_SESSION_IDLE_MINUTES` di `.env` root. Nilai yang bukan angka positif **jatuh ke 15 menit**, bukan mematikan timeout — konfigurasi salah tidak boleh membuka akses tanpa batas.
 
 ### Peringatan sebelum keluar
 

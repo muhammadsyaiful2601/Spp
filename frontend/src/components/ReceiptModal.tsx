@@ -1,11 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ModalKind, Profile, Student, Transaction } from "../types";
 import type { AuthUser } from "../api";
 import { Download, Printer, X } from "lucide-react";
 import { money } from "../lib/format";
 import { MosqueMark } from "./icons";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
 
 const NUMBER_WORDS = [
   "",
@@ -31,26 +30,59 @@ const NUMBER_WORDS = [
   "Dua Puluh",
 ];
 
-/** Terbilang for the words-under-the-total line Indonesian receipts expect. */
+/**
+ * Words for one 0-999 group. Indonesian only has dedicated forms up to twenty,
+ * so everything above that is "se-X" — three ratus, not "Tiga Ratus".
+ */
+function wordsUnderThousand(value: number): string {
+  if (value === 0) return "";
+  if (value < 20) return NUMBER_WORDS[value];
+
+  const hundreds = Math.floor(value / 100);
+  const rest = value % 100;
+
+  const parts: string[] = [];
+  if (hundreds > 0) parts.push(`${NUMBER_WORDS[hundreds]} Ratus`);
+  if (rest > 0) {
+    parts.push(
+      rest < 20
+        ? NUMBER_WORDS[rest]
+        : `${NUMBER_WORDS[Math.floor(rest / 10)]} Puluh${rest % 10 > 0 ? ` ${NUMBER_WORDS[rest % 10]}` : ""}`,
+    );
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Terbilang for the words-under-the-total line Indonesian receipts expect.
+ *
+ * Indonesian groups by thousands, not by a million-and-remainder the way the
+ * previous flat scale list implied: every three digits are read with the same
+ * 0-999 vocabulary and then qualified with its scale (juta / ribu). The earlier
+ * version looked a chunk straight up in a 21-entry table, so anything from
+ * Rp 21.000 upward printed "undefined" — which is every realistic school fee.
+ */
 function toWords(amount: number): string {
   const whole = Math.floor(Math.abs(amount));
   if (!Number.isFinite(whole) || whole === 0) return "Nol Rupiah";
 
-  const groups: string[] = [];
-  let rest = whole;
   const scales: [number, string][] = [
     [1_000_000_000, "Miliar"],
     [1_000_000, "Juta"],
     [1_000, "Ribu"],
   ];
+
+  const groups: string[] = [];
+  let rest = whole;
+
   for (const [value, label] of scales) {
     const chunk = Math.floor(rest / value);
     if (chunk > 0) {
-      groups.push(`${NUMBER_WORDS[chunk]} ${label}`);
+      groups.push(`${wordsUnderThousand(chunk)} ${label}`);
       rest %= value;
     }
   }
-  if (rest > 0) groups.push(NUMBER_WORDS[rest]);
+  if (rest > 0) groups.push(wordsUnderThousand(rest));
 
   return `${groups.join(" ").trim()} Rupiah`;
 }
@@ -114,6 +146,18 @@ export function ReceiptModal({
   // Captured once when the receipt opens so the printed date cannot drift while
   // the modal sits on screen.
   const [printedAt] = useState(() => new Date());
+
+  // Clears the print flag however the dialog ends — printed, cancelled, or
+  // closed by the browser. Without this the portal would stay hidden and the
+  // app would look blank after the first cancelled print.
+  useEffect(() => {
+    const clear = () => document.body.classList.remove("printing-receipt");
+    window.addEventListener("afterprint", clear);
+    return () => {
+      window.removeEventListener("afterprint", clear);
+      clear();
+    };
+  }, []);
   const printedDate = printedAt.toLocaleDateString("id-ID", {
     weekday: "long",
     day: "numeric",
@@ -160,6 +204,16 @@ export function ReceiptModal({
     setPdfBusy(true);
     setPdfError("");
     try {
+      // Loaded on demand, not at module scope. Together these two are the bulk
+      // of the bundle, and nothing on this screen needs them until the user
+      // actually asks for a PDF — a static import dragged both into the initial
+      // chunk for every visitor, including everyone who only ever reads the
+      // receipt on screen.
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+
       const canvas = await html2canvas(receiptElement, {
         scale: 2,
         useCORS: true,
@@ -191,7 +245,16 @@ export function ReceiptModal({
     }
   }
 
-  return (
+  // Rendered into a portal on `document.body` rather than inline in the app tree.
+  //
+  // Printing hid the rest of the portal with `visibility: hidden`, which only
+  // stops the pixels — the layout is still built, so the sidebar, topbar and
+  // every screen behind the modal kept reserving height and pushed a blank
+  // second sheet into the print job. From `body` the receipt is a sibling of
+  // the app root, so the whole of `#root` can be taken out of the document
+  // flow for the duration of the print and the receipt lands on one sheet.
+  return createPortal(
+    (
     <div className="modal-backdrop receipt-backdrop">
       <section
         className="modal receipt-modal"
@@ -349,13 +412,23 @@ export function ReceiptModal({
           </button>
           <button
             className="button button-primary"
-            onClick={() => window.print()}
+            onClick={() => {
+              // The flag is what lets the print stylesheet drop `#root` out of
+              // the document entirely. It is cleared again on `afterprint`
+              // because a cancelled print dialog still fires the print event
+              // in some browsers, and leaving the app hidden would strand the
+              // user on a blank screen.
+              document.body.classList.add("printing-receipt");
+              window.print();
+            }}
           >
             <Printer size={16} /> Cetak kuitansi
           </button>
         </div>
       </section>
     </div>
+    ),
+    document.body,
   );
 }
 

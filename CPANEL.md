@@ -516,6 +516,32 @@ chmod 600 "$HOME"/backups/uploads-*.tar.gz
 Salin `.env` secara manual melalui kanal backup yang dilindungi; jangan
 mengirimnya lewat email/chat atau membuat salinan di area publik.
 
+### Queue worker untuk email peringatan
+
+Email "apakah Anda baru masuk?" dikirim lewat antrean (`jobs`), bukan di dalam
+permintaan login. Alasannya nyata: mengirimnya inline membuat login menunggu satu
+percakapan SMTP penuh, dan relay yang lambat mendorong respons melewati batas
+kesabaran browser sehingga muncul sebagai "Server tidak dapat dihubungi" —
+padahal server-nya sehat. Di queue, login selesai begitu token terbit.
+
+Konsekuensinya, **tanpa worker email peringatan tidak pernah terkirim.** Yang
+tetap jalan penuh adalah verifikasi email dan atur ulang kata sandi, karena
+keduanya dipanggil langsung dan tidak lewat antrean.
+
+Tambahkan di **Cron Jobs** cPanel:
+
+```cron
+* * * * * cd "$HOME/apps/sekolah/backend" && php artisan queue:work --stop-when-empty --tries=1 >> /dev/null 2>&1
+```
+
+Tambahkan juga pekerjaan berkala bila cPanel menyediakan cron jadwal:
+`php artisan schedule:run`. Periksa antrean sesekali dengan
+`php artisan queue:failed`; email yang gagal ada di sana, bukan hilang diam-diam.
+
+Jangan pernah memakai `QUEUE_CONNECTION=sync` di produksi: itu menjalankan
+pekerjaan antrean di dalam permintaan, dan masalah yang baru saja dihapus akan
+kembali.
+
 ### Pemulihan database
 
 Pemulihan menimpa database tujuan. Ambil backup keadaan saat ini dan periksa

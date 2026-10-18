@@ -27,7 +27,17 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        if (! Auth::attempt($credentials)) {
+        // The guard is named explicitly rather than left to the default.
+        //
+        // `Authenticate` calls `shouldUse()` for whichever guard authenticated the
+        // current request, so once anything in this process has authenticated with
+        // `auth:sanctum`, the default guard resolves to Sanctum's `RequestGuard`
+        // — which has no `attempt()`, and the sign-in dies with a 500. Each HTTP
+        // request boots a fresh application in production so this cannot leak
+        // between requests there, but relying on that ordering is a trap: it makes
+        // the endpoint work or fail depending on what ran before it. `web` is the
+        // configured default (see config/auth.php).
+        if (! Auth::guard('web')->attempt($credentials)) {
             // A rejected sign-in is exactly what an audit screen is for, so it is
             // recorded even though there is no account to attribute it to.
             ActivityLogger::record(
@@ -62,13 +72,10 @@ class AuthController extends Controller
 
         ActivityLogger::record('akun.masuk', 'akun', 'Masuk ke portal.');
 
-        // The "was this you?" notice is an SMTP round-trip to the relay, sent
-        // synchronously because this deployment has no queue worker. Doing it
-        // inline stalled the login response long enough to trip the browser's
-        // request timeout, so a correct sign-in came back as "Server tidak dapat
-        // dihubungi" and forced a page refresh. Deferred, the token is returned
-        // immediately and the email follows once the response is already on its
-        // way — a slow or unreachable relay can no longer break the sign-in.
+        // Queued, so this only writes a row in the jobs table. Sent inline it used to
+        // hold the response for a whole SMTP exchange, and a slow relay made
+        // sign-in fail with "Server tidak dapat dihubungi" while the server was
+        // perfectly healthy. Deferred so the row lands outside the request.
         defer(fn () => $this->sendLoginAlert($request, $user));
 
         return response()->json(['data' => ['user' => $user, 'token' => $token, 'token_type' => 'Bearer']]);

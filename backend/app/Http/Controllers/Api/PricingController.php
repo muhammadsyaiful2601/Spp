@@ -167,27 +167,27 @@ class PricingController extends Controller
 
         DB::transaction(function () use ($data) {
             foreach ($data['rates'] as $rate) {
-                $updated = DB::table('spp_periods')
-                    ->where('academic_year_id', $data['academic_year_id'])
-                    ->where('class_level_id', $rate['class_level_id'])
-                    ->update([
-                        'monthly_amount' => $rate['monthly_amount'],
-                        'updated_at' => now(),
-                    ]);
-
-                if ($updated === 0) {
-                    foreach ([['Semester Ganjil', 7, 12], ['Semester Genap', 1, 6]] as [$name, $start, $end]) {
-                        DB::table('spp_periods')->insert([
+                // Both semesters are written individually rather than through one
+                // unfiltered update. That update returned a non-zero count whenever
+                // *any* row existed for the class, so a class that had only its
+                // ganjil period configured was updated in place and never given a
+                // genap period — leaving January to June priced at the old amount,
+                // or at nothing at all, for a whole school year.
+                foreach ([['Semester Ganjil', 7, 12], ['Semester Genap', 1, 6]] as [$name, $start, $end]) {
+                    DB::table('spp_periods')->updateOrInsert(
+                        [
                             'academic_year_id' => $data['academic_year_id'],
                             'class_level_id' => $rate['class_level_id'],
-                            'name' => $name,
                             'month_start' => $start,
                             'month_end' => $end,
+                        ],
+                        [
+                            'name' => $name,
                             'monthly_amount' => $rate['monthly_amount'],
                             'created_at' => now(),
                             'updated_at' => now(),
-                        ]);
-                    }
+                        ],
+                    );
                 }
             }
         });

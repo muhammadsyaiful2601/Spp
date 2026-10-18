@@ -5,12 +5,10 @@ import {
   ClipboardList,
   Clock,
   Database,
-  Download,
   HandCoins,
   History,
   LayoutDashboard,
   Plus,
-  Printer,
   ShieldCheck,
   SlidersHorizontal,
   UserCog,
@@ -28,9 +26,11 @@ import {
   createTreasurer,
   deleteSchoolFavicon,
   fetchAcademicYears,
+createStudent,
   fetchAccount,
   fetchActivityLogs,
   fetchPaymentReport,
+  purgeActivityLogs,
   fetchPortalData,
   fetchStudentBills,
   fetchPublicSchoolProfile,
@@ -38,6 +38,7 @@ import {
   isHexColor,
   isNetworkFailure,
   isRateLimited,
+  isTimeout,
   login as loginApi,
   logout as logoutApi,
   normalizeHex,
@@ -88,7 +89,7 @@ import {
   initialTransactions,
   monthNames,
 } from "./constants";
-import { formatToday } from "./lib/format";
+import { formatToday, greetingPart } from "./lib/format";
 import { studentSppAmount } from "./lib/students";
 import { clearReadCaches, formatBytes, readLocal, readProfile, readSessionUser, writeLocal } from "./lib/storage";
 import { applyFavicon, faviconErrorMessage } from "./lib/favicon";
@@ -138,16 +139,23 @@ const recoveryEntry = (() => {
   // anything else is discarded instead of being copied into the form.
   const raw = params.get("kode");
   const kode = raw && /^[A-Za-z0-9]{64}$/.test(raw) ? raw : "";
-  if (!lupa && !kode) return { mode: "login" as const, token: "" };
+  // The emailed link also carries the token's deadline, so the reset screen can
+  // count the window down instead of leaving the user to find out by failing.
+  // The browser could forge or edit this, so it drives the on-screen timer only:
+  // the endpoint re-derives the real expiry from the stored row.
+  const stamped = Number(params.get("s"));
+  const expiresAt = Number.isSafeInteger(stamped) && stamped > 0 ? stamped : 0;
+  if (!lupa && !kode) return { mode: "login" as const, token: "", expiresAt: 0 };
   params.delete("lupa");
   params.delete("kode");
+  params.delete("s");
   const query = params.toString();
   window.history.replaceState(
     null,
     "",
     query ? `${window.location.pathname}?${query}` : window.location.pathname,
   );
-  return { mode: "forgot" as const, token: kode };
+  return { mode: "forgot" as const, token: kode, expiresAt: kode ? expiresAt : 0 };
 })();
 
 function App() {
@@ -185,6 +193,7 @@ function App() {
    */
   const [bootTimedOut, setBootTimedOut] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [studentBusy, setStudentBusy] = useState(false);
   const [students, setStudents] = useState(() =>
     readLocal("cendekia-students", initialStudents),
   );
@@ -445,7 +454,13 @@ useEffect(() => {
         perPage: 15,
       }),
     enabled:
-      Boolean(currentUser) && emailVerified && currentUser?.role === "pimpinan",
+      Boolean(currentUser) &&
+      emailVerified &&
+      currentUser?.role === "pimpinan" &&
+      // Gated on the page as well. The comment above asks for exactly this and
+      // the previous `enabled` never did it: every leadership session fired the
+      // request on login and on every filter keystroke, on every single screen.
+      effectivePage === "log",
   });
 
   // Debounce the server-side search: 300ms is long enough to swallow a burst of
@@ -719,17 +734,21 @@ const sppPeriodsQuery = useQuery({
     (item) => !readNotices.includes(item.id),
   ).length;
 
+  // Routed through writeLocal rather than localStorage directly. Safari's
+  // private mode and a full quota both make setItem throw, and an exception
+  // escaping an effect takes the whole app down to the error boundary — losing
+  // the cached feed in exchange for a blank page.
   useEffect(() => {
-    localStorage.setItem("cendekia-students", JSON.stringify(students));
+    writeLocal("cendekia-students", students);
   }, [students]);
   useEffect(() => {
-    localStorage.setItem("cendekia-transactions", JSON.stringify(transactions));
+    writeLocal("cendekia-transactions", transactions);
   }, [transactions]);
   useEffect(() => {
-    localStorage.setItem("cendekia-profile", JSON.stringify(profile));
+    writeLocal("cendekia-profile", profile);
   }, [profile]);
   useEffect(() => {
-    localStorage.setItem("cendekia-spp-amounts", JSON.stringify(sppAmounts));
+    writeLocal("cendekia-spp-amounts", sppAmounts);
   }, [sppAmounts]);
   useEffect(() => {
     const portal = portalQuery.data;
@@ -929,7 +948,7 @@ const sppPeriodsQuery = useQuery({
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    localStorage.setItem("cendekia-read-notices", JSON.stringify(readNotices));
+    writeLocal("cendekia-read-notices", readNotices);
   }, [readNotices]);
   useEffect(() => {
     if (!noticeOpen) return;
@@ -1216,13 +1235,17 @@ const sppPeriodsQuery = useQuery({
     monthFilter = "Semua bulan",
     sections?: ReportSections,
   ) {
+    // Set before any branch, not inside them. The Reports page always passes its
+    // own rows, so the `!exportRows` fetch below never ran for CSV/XLSX and the
+    // flag stayed false for the whole generation — leaving all four export
+    // buttons live and re-clickable while a file was being generated.
+    setPdfLoading(true);
+
     // Resolve the row set once, on the server, so no export can inherit the
     // portal feed's 100-row cap. The Reports page passes rows it already
-    // fetched for the active filters; the dashboard buttons pass nothing and
-    // get the unfiltered year here.
+    // fetched for the active filters.
     let exportRows = reportTransactions;
     if (!exportRows) {
-      setPdfLoading(true);
       try {
         const result = await fetchPaymentReport({ academicYearId: reportYearId });
         exportRows = result.rows.map(toTransaction);
@@ -1237,7 +1260,6 @@ const sppPeriodsQuery = useQuery({
     }
 
     if (format === "pdf" || format === "print") {
-      setPdfLoading(true);
       try {
         // The SPP bill-status table is built from the student roster, and the
         // roster is year-scoped. If the report is about a different year than
@@ -1425,19 +1447,45 @@ const sppPeriodsQuery = useQuery({
       setPdfLoading(false);
     }
   }
-  function addStudent(event: React.FormEvent<HTMLFormElement>) {
+  async function addStudent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const student = {
-      id: String(form.get("id")),
-      name: String(form.get("name")),
-      className: String(form.get("className")),
-      nisn: String(form.get("nisn")),
-      paid: [],
-    };
-    setStudents((items) => [student, ...items]);
-    setModal(null);
-    setToast("Data siswa berhasil ditambahkan.");
+    const className = String(form.get("className"));
+    const level = classLevelRows.find((item) => item.name === className);
+    if (!level) {
+      setModal(null);
+      setToast("Tingkat kelas tidak ditemukan. Muat ulang halaman lalu coba lagi.");
+      return;
+    }
+
+    setStudentBusy(true);
+    try {
+      await createStudent({
+        nisn: String(form.get("nisn")).trim(),
+        student_number: String(form.get("id")).trim(),
+        full_name: String(form.get("name")).trim(),
+        class_level_id: level.id,
+      });
+      setModal(null);
+      // Refetch rather than pushing a local row: the portal response is what
+      // carries the student's primary key, and a locally invented one has none.
+      // Without it every payment attempt on the new record is refused.
+      await queryClient.invalidateQueries({ queryKey: ["portal-data"] });
+      setToast("Data siswa berhasil ditambahkan.");
+    } catch (error) {
+      setModal(null);
+      setToast(
+        validationMessage(error, "nisn") ??
+          validationMessage(error, "student_number") ??
+          validationMessage(error, "full_name") ??
+          validationMessage(error, "class_level_id") ??
+          (isNetworkFailure(error)
+            ? "Server tidak dapat dihubungi. Siswa belum tersimpan."
+            : "Data siswa gagal disimpan."),
+      );
+    } finally {
+      setStudentBusy(false);
+    }
   }
   async function uploadLogo(file?: File) {
     if (!file || logoBusy) return;
@@ -1956,8 +2004,9 @@ async function handlePhotoUpload(file: File) {
           error={authError}
           notice={recoverNotice}
           initialToken={entry.token}
+          expiresAt={entry.expiresAt}
           onBackToLogin={() => {
-            setEntry({ mode: "login", token: "" });
+            setEntry({ mode: "login", token: "", expiresAt: 0 });
             setAuthMode("login");
             setAuthError("");
             setRecoverNotice("");
@@ -1990,7 +2039,7 @@ async function handlePhotoUpload(file: File) {
                 password_confirmation: password,
               });
               setRecoverNotice("Kata sandi berhasil diubah. Silakan masuk kembali.");
-              setEntry({ mode: "login", token: "" });
+              setEntry({ mode: "login", token: "", expiresAt: 0 });
               setAuthMode("login");
             } catch (error) {
               setAuthError(
@@ -2040,12 +2089,17 @@ async function handlePhotoUpload(file: File) {
             // A 429 is a third case: the credentials may well be right, but the
             // login throttle (`throttle:10,1`) has locked this IP for the minute,
             // so blaming the password would push people into retyping it.
+            // A timeout is a fourth: the server answered nothing in time but is
+            // very much alive, and telling someone to go restart it sends them
+            // off to fix a process that was working.
             setAuthError(
-              isNetworkFailure(error)
-                ? "Server tidak dapat dihubungi. Pastikan backend berjalan, lalu coba lagi."
-                : isRateLimited(error)
-                  ? "Terlalu banyak percobaan login. Tunggu satu menit, lalu coba lagi."
-                  : "Username atau kata sandi tidak sesuai.",
+              isTimeout(error)
+                ? "Server terlalu lama menjawab. Coba lagi sebentar."
+                : isNetworkFailure(error)
+                  ? "Server tidak dapat dihubungi. Pastikan backend berjalan, lalu coba lagi."
+                  : isRateLimited(error)
+                    ? "Terlalu banyak percobaan login. Tunggu satu menit, lalu coba lagi."
+                    : "Username atau kata sandi tidak sesuai.",
             );
           } finally {
             setAuthLoading(false);
@@ -2100,7 +2154,7 @@ async function handlePhotoUpload(file: File) {
               </div>
               <h1>
                 {effectivePage === "dashboard"
-                  ? `Assalamu'alaikum, ${currentUser.name.split(" ")[0]}`
+                  ? `Selamat ${greetingPart(now)}, ${currentUser.name.split(" ")[0]}`
                   : pageTitles[page]}
               </h1>
               <p>
@@ -2123,22 +2177,6 @@ async function handlePhotoUpload(file: File) {
                               : "Pantau realisasi penerimaan dan tunggakan sekolah."}
               </p>
             </div>
-            {effectivePage === "dashboard" && (
-              <div className="heading-actions">
-                <button
-                  className="button button-outline"
-                  onClick={() => void exportReport("print", transactions)}
-                >
-                  <Printer size={16} /> Print
-                </button>
-                <button
-                  className="button button-outline"
-                  onClick={() => void exportReport("pdf", transactions)}
-                >
-                  <Download size={16} /> Unduh PDF
-                </button>
-              </div>
-            )}
             {effectivePage === "siswa" && (
               <button
                 className="button button-primary"
@@ -2293,6 +2331,28 @@ async function handlePhotoUpload(file: File) {
                 setLogPage(1);
               }}
               onPageChange={setLogPage}
+              onPurge={async () => {
+                try {
+                  const { message } = await purgeActivityLogs();
+                  // Page 1: with one row left, any higher page is now out of
+                  // range and the list would render empty for no reason.
+                  setLogPage(1);
+                  setLogSearch("");
+                  setLogCategory("");
+                  setLogFrom("");
+                  setLogTo("");
+                  await activityLogQuery.refetch();
+                  setToast(message);
+                } catch (error) {
+                  setToast(
+                    isNetworkFailure(error)
+                      ? "Server tidak dapat dihubungi. Log tidak berubah."
+                      : isRateLimited(error)
+                        ? "Terlalu banyak percobaan hapus. Tunggu satu menit lalu coba lagi."
+                        : "Log aktivitas gagal dihapus.",
+                  );
+                }
+              }}
               onReset={resetLogFilters}
               onSearchChange={setLogSearch}
               onToChange={(value) => {
@@ -2401,6 +2461,7 @@ async function handlePhotoUpload(file: File) {
           setModal={setModal}
           classLevels={classLevels}
           addStudent={addStudent}
+          busy={studentBusy}
         />
       )}
       {modal === "receipt" && receiptTransaction && (

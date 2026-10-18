@@ -11,7 +11,11 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-#[Fillable(['name', 'username', 'email', 'nip', 'password', 'role'])]
+// `role` is deliberately absent. It is the gate protecting bank details,
+// treasurer management, the audit trail and the database backup, so no request
+// may ever reach it through mass assignment. Seeders that need to set it use
+// `forceFill()`, which is explicit by construction.
+#[Fillable(['name', 'username', 'email', 'nip', 'password'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {

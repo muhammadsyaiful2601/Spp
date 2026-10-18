@@ -5,37 +5,20 @@ use Pdo\Mysql;
 
 return [
 
-    /*
-    |--------------------------------------------------------------------------
-    | Default Database Connection Name
-    |--------------------------------------------------------------------------
-    |
-    | Here you may specify which of the database connections below you wish
-    | to use as your default connection for database operations. This is
-    | the connection which will be utilized unless another connection
-    | is explicitly specified when you execute a query / statement.
-    |
-    */
-
-    'default' => env('DB_CONNECTION', 'sqlite'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Database Connections
-    |--------------------------------------------------------------------------
-    |
-    | Below are all of the database connections defined for your application.
-    | An example configuration is provided for each database system which
-    | is supported by Laravel. You're free to add / remove connections.
-    |
-    */
+    'default' => env('DB_CONNECTION', 'mysql'),
 
     'connections' => [
 
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => env('DB_URL'),
-            'database' => env('DB_DATABASE', database_path('database.sqlite')),
+            // Tests pass an explicit `:memory:` path; nothing should ever fall
+            // back to a file, because there is no file in the project any more.
+            // Read from its own key, never from `DB_DATABASE`. That one always holds the
+                // MySQL schema name (`spp`), so sharing it pointed this connection
+                // at a file called `spp`. Only the test suite uses SQLite, and it
+                // asks for an in-memory database.
+                'database' => env('DB_SQLITE_DATABASE', ':memory:'),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
             'busy_timeout' => null,
@@ -116,32 +99,10 @@ return [
 
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Migration Repository Table
-    |--------------------------------------------------------------------------
-    |
-    | This table keeps track of all the migrations that have already run for
-    | your application. Using this information, we can determine which of
-    | the migrations on disk haven't actually been run on the database.
-    |
-    */
-
     'migrations' => [
         'table' => 'migrations',
         'update_date_on_publish' => true,
     ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Redis Databases
-    |--------------------------------------------------------------------------
-    |
-    | Redis is an open source, fast, and advanced key-value store that also
-    | provides a richer body of commands than a typical key-value system
-    | such as Memcached. You may define your connection settings here.
-    |
-    */
 
     'redis' => [
 

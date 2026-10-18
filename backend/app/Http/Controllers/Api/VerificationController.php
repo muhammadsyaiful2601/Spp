@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Email verification and forgotten-password recovery.
@@ -63,13 +64,21 @@ class VerificationController extends Controller
             'email_verification_sent_at' => now(),
         ])->save();
 
-        Notification::send($user, new VerifyEmailNotification($code));
-
         ActivityLogger::record(
             'akun.verifikasi_kirim',
             'akun',
             "Meminta kode verifikasi email. Kode dikirim ke {$user->email}.",
         );
+
+        // Swallowed for the same reason as the reset flow: the token is already
+        // stored and the cooldown is already running, so a relay failure here
+        // would answer 500 while burning a two-minute cooldown the user cannot
+        // see the reason for. Reporting keeps the outage diagnosable.
+        try {
+            Notification::send($user, new VerifyEmailNotification($code));
+        } catch (Throwable $exception) {
+            report($exception);
+        }
 
         return response()->json([
             'message' => "Kode verifikasi telah dikirim ke {$user->email}.",
@@ -156,17 +165,28 @@ class VerificationController extends Controller
                 ['token' => hash('sha256', $token), 'created_at' => now()]
             );
 
-            Notification::send($user, new ResetPasswordNotification($token));
-
             // The requester is anonymous, so the account is passed explicitly:
             // attributing the attempt to the address being recovered is what
             // makes a password-recovery sweep visible on the audit screen.
+            // Recorded BEFORE the send, because the send is the step that can
+            // fail and a swallowed failure must still leave a trace.
             ActivityLogger::record(
                 'akun.lupa_kata_sandi',
                 'akun',
                 'Meminta kode atur ulang kata sandi melalui email.',
                 ['actor' => $user],
             );
+
+            // Swallowed on purpose. The method promises the same answer whether
+            // or not the address is registered, and an SMTP outage would
+            // otherwise turn that promise into an oracle: a known address would
+            // answer 500 while an unknown one answered 200, which is enough to
+            // enumerate the portal's accounts.
+            try {
+                Notification::send($user, new ResetPasswordNotification($token));
+            } catch (Throwable $exception) {
+                report($exception);
+            }
         }
 
         return response()->json([
@@ -203,6 +223,19 @@ class VerificationController extends Controller
         }
 
         $user = User::where('email', $row->email)->firstOrFail();
+
+        // A "reset" that lands on the password the account already has is not a
+        // change at all: it leaves the owner believing the old password is dead
+        // while it still opens the account. The old password is never asked for,
+        // so this refuses only the reuse and does not lock out someone who has
+        // genuinely lost it. The token is still left intact, so the next attempt
+        // can pick a different password.
+        if (Hash::check($data['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['Kata sandi baru tidak boleh sama dengan kata sandi lama.'],
+            ]);
+        }
+
         $user->forceFill(['password' => Hash::make($data['password'])])->save();
         DB::table('password_reset_tokens')->where('email', $user->email)->delete();
 

@@ -111,7 +111,16 @@ class ReportController extends Controller
 
     public function dashboard(Request $request): JsonResponse
     {
-        $yearId = $request->integer('academic_year_id') ?: DB::table('academic_years')->where('is_active', true)->value('id');
+        $data = $request->validate([
+            'academic_year_id' => ['nullable', 'integer', 'exists:academic_years,id'],
+        ]);
+
+        // Without this an unknown id was truthy, `find()` returned null, and the
+        // year filter was skipped entirely — so the endpoint quietly answered
+        // with lifetime figures for a request that named a year.
+        $yearId = (int) ($data['academic_year_id'] ?? 0)
+            ?: DB::table('academic_years')->where('is_active', true)->value('id');
+
         $received = DB::table('payment_transactions')->when($yearId, function ($query) use ($yearId) {
             $year = DB::table('academic_years')->find($yearId);
             if ($year) {
@@ -120,7 +129,15 @@ class ReportController extends Controller
         });
         $transactions = (clone $received)->get(['amount', 'type', 'paid_at']);
         $sppDue = DB::table('spp_bills')->where('status', 'belum_bayar')->when($yearId, fn ($query) => $query->where('academic_year_id', $yearId))->sum('amount');
-        $nonSppDue = DB::table('non_spp_bills')->sum(DB::raw('amount_due - amount_paid'));
+
+        // The year lives on `position_rates`, not on `non_spp_bills`, so the scope
+        // has to come through a join. Summing the table bare reported every year
+        // at once while the SPP figure next to it was scoped, which is exactly
+        // how a printed report ends up disagreeing with the dashboard on screen.
+        $nonSppDue = DB::table('non_spp_bills')
+            ->join('position_rates', 'position_rates.id', '=', 'non_spp_bills.position_rate_id')
+            ->when($yearId, fn ($query) => $query->where('position_rates.academic_year_id', $yearId))
+            ->sum(DB::raw('non_spp_bills.amount_due - non_spp_bills.amount_paid'));
         $monthly = $transactions->groupBy(fn ($item) => substr($item->paid_at, 0, 7))
             ->map(fn ($items, $month) => ['month' => $month, 'amount' => (float) $items->sum('amount')])->values();
 

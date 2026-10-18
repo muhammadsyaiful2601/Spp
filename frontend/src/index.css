@@ -199,7 +199,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 .login-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 2px; padding: 0; color: #6c7871; font-size: 9px; font-weight: 600; }
 .login-link:hover { color: var(--brand); text-decoration: underline; }
-.login-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 0; color: #6c7871; font-size: 9px; font-weight: 600; }
+/* The manual-code link wraps onto two lines on the reset step, so it needs to
+   centre its own text; align-self:flex-start alone left a ragged left edge. */
+.login-back { display: inline-flex; align-items: center; justify-content: center; gap: 6px; align-self: center; max-width: 100%; padding: 0; color: #6c7871; font-size: 9px; font-weight: 600; line-height: 1.6; text-align: center; }
 .login-back:hover { color: var(--brand); text-decoration: underline; }
 .login-back-solid { margin-top: 16px; }
 .login-notice { margin: 0; padding: 9px 11px; color: #4b6152; background: var(--brand-tint); border: 1px solid var(--brand-border); border-radius: 6px; font-size: 9px; line-height: 1.6; }
@@ -316,7 +318,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .notice-footer:hover { background: var(--brand-tint); }
 .page-content { width: 100%; max-width: 1400px; padding: 31px 39px 28px; margin: 0 auto; flex: 1; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 23px; }
-.heading-actions { display: inline-flex; align-items: center; gap: 8px; }
 .eyebrow { color: #8a968e; font-size: 9px; letter-spacing: .9px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--brand-mid); box-shadow: 0 0 0 3px var(--brand-soft); margin-left: 3px; }
 h1, h2, h3, p { margin-top: 0; }
@@ -362,7 +363,6 @@ h1, h2, h3, p { margin-top: 0; }
 .panel-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .panel-heading h2, .list-toolbar h2 { color: #34433a; font: 700 13px 'Manrope', sans-serif; margin: 1px 0 4px; }
 .panel-heading p, .list-toolbar p { color: #99a19c; font-size: 9px; margin: 0; }
-.select-button { display: flex; align-items: center; gap: 8px; height: 29px; padding: 0 9px; background: #fff; border: 1px solid #e9ede9; border-radius: 5px; color: #727f76; font-size: 9px; }
 .chart-summary { display: flex; align-items: center; gap: 10px; margin: 18px 0 1px; }
 .chart-summary > strong { color: #2f4136; font: 700 16px 'Manrope', sans-serif; }
 .chart-summary > span { display: flex; align-items: center; gap: 5px; color: #8b9690; font-size: 9px; }
@@ -437,7 +437,6 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 .toolbar-controls { display: flex; align-items: center; gap: 9px; }
 .search-box { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 9px; background: #fff; border: 1px solid #e5eae5; border-radius: 5px; color: #9aa49d; }
 .search-box input { width: 170px; border: 0; outline: 0; color: #506056; background: transparent; font-size: 9px; }.search-box input::placeholder { color: #a3aba5; }.search-box kbd { padding: 2px 4px; color: #a3aba5; background: #f6f7f5; border: 1px solid #eceeeb; border-radius: 3px; font: 8px 'DM Sans', sans-serif; }
-.compact-add { height: 34px; }
 .button-table { height: 28px; padding: 0 8px; color: #4b7c5e; background: #f2f7f2; border: 1px solid #e2eee4; font-size: 8px; }
 .id-cell { color: #526258; font-size: 9px; font-weight: 600; }.secondary-id { display: block; color: #a3aba5; font-size: 8px; margin-top: 3px; }.class-tag { padding: 4px 7px; border-radius: 4px; background: #f1f4f0; color: #67776b; font-size: 8px; }
 .payment-state { display: grid; width: 108px; gap: 6px; color: #89948b; font-size: 8px; }.mini-progress { height: 4px; background: #edf1ed; border-radius: 4px; overflow: hidden; }.mini-progress i { display: block; height: 100%; border-radius: inherit; background: var(--brand-mid); }
@@ -459,6 +458,15 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 .report-filter-strip { display: flex; align-items: center; gap: 22px; padding: 10px 19px; color: #929d95; background: #fcfdfb; border-block: 1px solid #eef1ed; font-size: 8px; }.report-filter-strip > span { display: flex; align-items: center; gap: 6px; }.report-filter-strip strong { color: #647269; font-weight: 600; }.report-filter-strip button { display: flex; align-items: center; gap: 5px; margin-left: auto; padding: 0; color: #4b805d; background: none; border: 0; font-size: 8px; font-weight: 600; }
 /* --- Activity log (audit trail) -------------------------------------------- */
 .log-filter-strip { gap: 14px; }
+/* Wipe confirmation. Sits directly under the toolbar so it reads as a reply to
+   the button that opened it, and borrows the danger palette of the button it
+   guards rather than the neutral one. */
+.log-purge-confirm { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 13px; margin: 0 19px 15px; padding: 13px 14px; border: 1px solid #f0dcd5; border-radius: 8px; background: #fdf3f0; }
+.log-purge-copy { flex: 1 1 320px; }
+.log-purge-copy strong { display: block; margin-bottom: 4px; color: #a8563f; font-size: 11px; }
+.log-purge-copy p { margin: 0; color: #7d6559; font-size: 9px; line-height: 1.65; }
+.log-purge-copy .log-purge-note { margin-top: 5px; color: #8a7568; }
+.log-purge-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .log-date-field { display: flex; align-items: center; gap: 7px; color: #929d95; font-size: 8px; }
 .log-date-field input { height: 27px; padding: 0 7px; color: #68756c; background: #fff; border: 1px solid #e5eae5; border-radius: 5px; font-size: 9px; }
 .log-date-field input:focus { border-color: var(--brand-mid); outline: none; }
@@ -581,24 +589,44 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 
 @media (max-width: 1120px) { .sidebar { width: 220px; }.main-area { margin-left: 220px; }.topbar { padding-inline: 27px; }.page-content { padding-inline: 27px; }.footer { padding-inline: 27px; }.metrics-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.dashboard-grid { grid-template-columns: minmax(0,1.5fr) minmax(260px,1fr); }.list-toolbar { align-items: flex-start; flex-direction: column; }.toolbar-controls { width: 100%; justify-content: space-between; }.search-box input { width: min(32vw,250px); }.account-layout { grid-template-columns: 1fr; } }
 @media (max-width: 800px) { .sidebar { transform: translateX(-100%); transition: transform .22s ease; width: 258px; box-shadow: 12px 0 35px rgba(20,45,31,.17); }.sidebar.sidebar-open { transform: translateX(0); }.sidebar-close { display: inline-grid !important; margin-left: auto; color: #a9c0b1; }.sidebar-scrim { display: block !important; position: fixed; z-index: 19; inset: 0; width: 100%; border: 0; background: rgba(20,39,29,.37); }.main-area { margin-left: 0; }.mobile-menu { display: inline-grid !important; margin-left: -8px; }.topbar { justify-content: flex-start; gap: 12px; height: 57px; flex-basis: 57px; padding-inline: 20px; }.top-actions { margin-left: auto; gap: 12px; }.page-content { padding: 25px 20px; }.footer { padding-inline: 20px; }.dashboard-grid { grid-template-columns: minmax(0,1.4fr) minmax(225px,1fr); }.payment-layout { grid-template-columns: minmax(230px,.8fr) minmax(0,1.5fr); }.profile-layout { grid-template-columns: minmax(0,1.4fr) minmax(210px,.75fr); } }
-@media (max-width: 620px) { .academic-year, .topbar-date { display: none; }.topbar { padding-inline: 14px; }.page-content { padding: 22px 14px 20px; }.page-heading { align-items: flex-start; flex-direction: column; gap: 13px; margin-bottom: 17px; }.page-heading h1 { font-size: 22px; }.page-heading > .button { align-self: stretch; }.metrics-grid { gap: 8px; }.metric-card { min-height: 118px; padding: 12px; }.metric-card > strong { font-size: 17px; }.metric-top { font-size: 9px; }.metric-icon { width: 28px; height: 28px; }.dashboard-grid, .dashboard-bottom { grid-template-columns: 1fr; }.revenue-panel, .status-panel { min-height: unset; }.bar-chart { height: 132px; gap: 5px; }.dashboard-grid { gap: 9px; }.donut-wrap { justify-content: center; }.transaction-panel .table-wrap { margin-right: 0; }.dashboard-bottom { gap: 9px; }.footer { padding: 12px 14px 15px; font-size: 7px; }.list-toolbar { padding: 14px; }.toolbar-controls { flex-wrap: wrap; }.toolbar-controls > * { flex: 1; }.search-box { min-width: 100%; }.search-box input { flex: 1; width: auto; }.compact-add { flex: 0 0 auto; }.table-wrap table { min-width: 730px; }.table-footer { padding-inline: 13px; }.payment-layout { grid-template-columns: 1fr; }.payment-search-panel { padding: 14px; }.student-results { grid-template-columns: 1fr 1fr; column-gap: 8px; }.student-result { min-width: 0; }.student-result > svg { display: none; }.billing-panel { padding: 15px; }.billing-header { align-items: flex-start; flex-direction: column; }.billing-summary { gap: 14px; flex-wrap: wrap; }.billing-summary > button { margin-left: 0; }.bill-months { grid-template-columns: repeat(3,1fr); }.report-summary { grid-template-columns: 1fr; gap: 8px; }.report-total { grid-template-columns: 1fr auto; align-items: center; }.report-total small { grid-column: 1 / -1; }.report-filter-strip { flex-wrap: wrap; gap: 9px 14px; padding-inline: 13px; }.report-filter-strip button { margin-left: 0; }.settings-content { padding: 16px 13px; }.settings-title { flex-direction: column; }.semester-cards { gap: 7px; }.semester-cards article { padding: 9px; }.semester-head { flex-direction: column; }.semester-date { font-size: 7px; }.semester-months { gap: 2px; }.semester-months span { font-size: 7px; }.tariff-row { grid-template-columns: 1fr 1fr .45fr; padding-inline: 8px; gap: 5px; }.money-input { width: 100%; }.tariff-header > span { font-size: 7px !important; }.active-badge { font-size: 7px; }.settings-actions { align-items: flex-end; }.maintenance-layout { grid-template-columns: 1fr; }.maintenance-message { grid-column: 1; }.maintenance-card { padding: 15px; }.profile-layout { grid-template-columns: 1fr; }.profile-form { padding: 15px; }.favicon-field { flex-wrap: wrap; }.favicon-tab { margin-left: 0; max-width: 100%; }.favicon-actions { flex-wrap: wrap; }.profile-aside { max-width: 100%; }.mini-receipt { max-width: 380px; }.form-grid { gap: 10px; }.profile-actions { align-items: flex-start; flex-direction: column; }.profile-actions .button { align-self: flex-end; }.month-grid { grid-template-columns: repeat(3,1fr); }.modal { padding: 16px; }.modal-backdrop { padding: 10px; }.toast { right: 12px; bottom: 12px; } }
+@media (max-width: 620px) { .academic-year, .topbar-date { display: none; }.topbar { padding-inline: 14px; }.page-content { padding: 22px 14px 20px; }.page-heading { align-items: flex-start; flex-direction: column; gap: 13px; margin-bottom: 17px; }.page-heading h1 { font-size: 22px; }.page-heading > .button { align-self: stretch; }.metrics-grid { gap: 8px; }.metric-card { min-height: 118px; padding: 12px; }.metric-card > strong { font-size: 17px; }.metric-top { font-size: 9px; }.metric-icon { width: 28px; height: 28px; }.dashboard-grid, .dashboard-bottom { grid-template-columns: 1fr; }.revenue-panel, .status-panel { min-height: unset; }.bar-chart { height: 132px; gap: 5px; }.dashboard-grid { gap: 9px; }.donut-wrap { justify-content: center; }.transaction-panel .table-wrap { margin-right: 0; }.dashboard-bottom { gap: 9px; }.footer { padding: 12px 14px 15px; font-size: 7px; }.list-toolbar { padding: 14px; }.toolbar-controls { flex-wrap: wrap; }.toolbar-controls > * { flex: 1; }.search-box { min-width: 100%; }.search-box input { flex: 1; width: auto; }.table-wrap table { min-width: 730px; }.table-footer { padding-inline: 13px; }.payment-layout { grid-template-columns: 1fr; }.payment-search-panel { padding: 14px; }.student-results { grid-template-columns: 1fr 1fr; column-gap: 8px; }.student-result { min-width: 0; }.student-result > svg { display: none; }.billing-panel { padding: 15px; }.billing-header { align-items: flex-start; flex-direction: column; }.billing-summary { gap: 14px; flex-wrap: wrap; }.billing-summary > button { margin-left: 0; }.bill-months { grid-template-columns: repeat(3,1fr); }.report-summary { grid-template-columns: 1fr; gap: 8px; }.report-total { grid-template-columns: 1fr auto; align-items: center; }.report-total small { grid-column: 1 / -1; }.report-filter-strip { flex-wrap: wrap; gap: 9px 14px; padding-inline: 13px; }.report-filter-strip button { margin-left: 0; }.settings-content { padding: 16px 13px; }.settings-title { flex-direction: column; }.semester-cards { gap: 7px; }.semester-cards article { padding: 9px; }.semester-head { flex-direction: column; }.semester-date { font-size: 7px; }.semester-months { gap: 2px; }.semester-months span { font-size: 7px; }.tariff-row { grid-template-columns: 1fr 1fr .45fr; padding-inline: 8px; gap: 5px; }.money-input { width: 100%; }.tariff-header > span { font-size: 7px !important; }.active-badge { font-size: 7px; }.settings-actions { align-items: flex-end; }.maintenance-layout { grid-template-columns: 1fr; }.maintenance-message { grid-column: 1; }.maintenance-card { padding: 15px; }.profile-layout { grid-template-columns: 1fr; }.profile-form { padding: 15px; }.favicon-field { flex-wrap: wrap; }.favicon-tab { margin-left: 0; max-width: 100%; }.favicon-actions { flex-wrap: wrap; }.profile-aside { max-width: 100%; }.mini-receipt { max-width: 380px; }.form-grid { gap: 10px; }.profile-actions { align-items: flex-start; flex-direction: column; }.profile-actions .button { align-self: flex-end; }.month-grid { grid-template-columns: repeat(3,1fr); }.modal { padding: 16px; }.modal-backdrop { padding: 10px; }.toast { right: 12px; bottom: 12px; } }
 .cost-delete-button { flex: 0 0 25px; color: #a65c53; }
 .cost-delete-button:hover:not(:disabled) { color: #fff; background: #a65c53; }
 
 @media print {
   @page {
     size: A4 portrait;
-    margin: 12mm;
+    margin: 10mm;
   }
 
-  body * {
-    visibility: hidden !important;
+  /* The application itself is removed from the document, not merely made
+     invisible. `visibility: hidden` was the reason a single receipt printed
+     across two sheets: hidden boxes still take part in layout, so the sidebar,
+     topbar and every page behind the modal kept reserving height below the
+     receipt and the browser paginated the leftovers onto a second sheet.
+     Scoped to `body.printing-receipt` so a Ctrl+P from anywhere else in the
+     app still prints the app. */
+  body.printing-receipt #root {
+    display: none !important;
+  }
+
+  /* Same rule for a Ctrl+P the user fires without pressing "Cetak kuitansi":
+     the receipt modal is open, so it is the only thing that should print.
+     `:has()` is the fallback path; the class above is what guarantees it on
+     browsers without `:has()` support. */
+  body:has(> .receipt-backdrop) #root {
+    display: none !important;
+  }
+
+  body.printing-receipt,
+  body.printing-receipt .receipt-backdrop {
+    margin: 0;
+    padding: 0;
+    background: #fff;
   }
 
   .receipt-backdrop {
-    position: absolute;
-    top: 0;
-    left: 0;
+    position: static;
     display: block;
     width: 100%;
     padding: 0;
@@ -608,10 +636,12 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
   .receipt-modal {
     position: static;
     width: 100%;
+    max-width: none;
     max-height: none;
     overflow: visible;
     padding: 0;
     border: 0;
+    border-radius: 0;
     box-shadow: none;
   }
 
@@ -625,8 +655,11 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
     width: 100%;
     border: 0;
     padding: 0;
-    break-inside: avoid;
+    /* One receipt, one sheet: keep the block whole rather than letting a
+       widow break it across a page boundary. */
+    break-inside: avoid-page;
     page-break-inside: avoid;
+    min-height: 0;
   }
 
   .no-print {
@@ -687,8 +720,8 @@ td strong { color: #435148; font-size: 9px; font-weight: 600; }
 .edit-payment-date { margin-top: 13px; }
 
 @media print {
-  .receipt-modal { width: 100%; }
-  .receipt-paper { position: static; width: 100%; padding: 12mm; border: 0; border-radius: 0; }
+  .receipt-modal { width: 100%; max-width: none; }
+  .receipt-paper { position: static; width: 100%; padding: 0; border: 0; border-radius: 0; }
 }
 
 /* Treasurer roster: below the 4-up grid width the four columns of a card no

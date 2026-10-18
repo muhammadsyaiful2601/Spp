@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ArrowLeft, ArrowRight, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Clock, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { MosqueMark, StarMotif } from "./icons";
 
 /**
@@ -7,13 +7,20 @@ import { MosqueMark, StarMotif } from "./icons";
  *
  * The reset form never opens just because a request was sent: after
  * "Kirim tautan atur ulang" the screen parks on a "check your email" step and
- * waits for the emailed `?kode=` link, which lands here with the code already
- * filled in. The waiting step keeps an explicit manual-entry fallback for
- * mail clients that cannot open links. The server answers identically whether
- * or not the account exists, so the same steps are shown either way.
+ * waits for the emailed `?kode=` link, which lands here and opens the form with
+ * that link as the only way in.
+ *
+ * There is deliberately no box to paste the code into. The code is 64
+ * characters of bearer authority: typed by hand it passes through the screen,
+ * the browser's form-history and autocomplete, and any support screenshot, and
+ * whoever reads it owns the account outright. Opening the emailed link keeps it
+ * out of the page, and the server still only honours it while the token is
+ * unexpired and unused. The server answers identically whether or not the
+ * account exists, so the same steps are shown either way.
  */
 export function ForgotPasswordPage({
   error,
+  expiresAt = 0,
   initialToken = "",
   logo,
   notice,
@@ -23,6 +30,13 @@ export function ForgotPasswordPage({
   onBackToLogin,
 }: {
   error: string;
+  /**
+   * Unix seconds when the emailed token stops being accepted, as stamped into
+   * the link by the notification. `0` means the link carried no deadline (a mail
+   * from before this existed) and the screen then shows no countdown at all —
+   * guessing one would be worse than staying quiet.
+   */
+  expiresAt?: number;
   initialToken?: string;
   logo: string;
   notice: string;
@@ -35,11 +49,36 @@ export function ForgotPasswordPage({
     initialToken ? "reset" : "request",
   );
   const [identifier, setIdentifier] = useState("");
-  const [token, setToken] = useState(initialToken);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState("");
+  const [confirmed, setConfirmed] = useState({ owner: false, sessions: false, reused: false });
+
+  // Ticks once a second only while a deadline exists, so the timer cannot drift
+  // away from the real one and leave the user submitting a link that is already
+  // dead. The value is display-only: the endpoint still decides what is valid.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!expiresAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [expiresAt]);
+
+  const secondsLeft = expiresAt ? Math.max(0, Math.ceil((expiresAt * 1000 - now) / 1000)) : 0;
+  const expired = Boolean(expiresAt) && secondsLeft === 0;
+  const confirmedAll = confirmed.owner && confirmed.sessions && confirmed.reused;
+
+  const minutes = Math.floor(secondsLeft / 60);
+  const clock = `${String(minutes).padStart(2, "0")}:${String(secondsLeft % 60).padStart(2, "0")}`;
+
+  // Each link gets its own confirmations, so leaving the reset step clears them.
+  // Done in the handler rather than an effect: the ticks are about one specific
+  // attempt, and the user leaving the step is what invalidates them.
+  const backToRequest = () => {
+    setConfirmed({ owner: false, sessions: false, reused: false });
+    setStep("request");
+  };
 
   const problem = localError || error;
 
@@ -49,11 +88,10 @@ export function ForgotPasswordPage({
     setLocalError("");
     try {
       // A request only parks the screen on the waiting step: the reset form
-      // opens for the emailed link (or the explicit manual fallback), never on
-      // its own. Any code carried by an older link is discarded, because
-      // sending a request rotates the token.
+      // opens for the emailed link, never on its own. Requesting rotates the
+      // token server-side, so a link already open on screen stops working and
+      // the new email becomes the only way back in.
       await onRequestCode(identifier.trim());
-      setToken("");
       setStep("sent");
     } finally {
       setBusy(false);
@@ -84,9 +122,23 @@ export function ForgotPasswordPage({
       setLocalError("Konfirmasi kata sandi tidak sama.");
       return;
     }
+    // Reachable only through an emailed link, but a stripped or malformed query
+    // must not be sent on as an empty code.
+    if (!initialToken) {
+      setLocalError("Tautan atur ulang tidak lengkap. Minta tautan baru.");
+      return;
+    }
+    if (expired) {
+      setLocalError("Tautan atur ulang sudah kedaluwarsa. Minta tautan baru.");
+      return;
+    }
+    if (!confirmedAll) {
+      setLocalError("Selesaikan seluruh konfirmasi sebelum menyimpan.");
+      return;
+    }
     setBusy(true);
     try {
-      await onReset(token.trim(), password);
+      await onReset(initialToken, password);
     } finally {
       setBusy(false);
     }
@@ -119,7 +171,7 @@ export function ForgotPasswordPage({
               ? "Masukkan username atau email. Tautan atur ulang dikirim ke email terdaftar."
               : step === "sent"
                 ? "Tautan sudah dikirim. Buka email, lalu klik tautannya untuk melanjutkan."
-                : "Gunakan kode dari email untuk membuat kata sandi baru."}
+                : "Tautan yang Anda buka sudah membawa kodenya. Pilih kata sandi baru untuk melanjutkan."}
           </p>
         </div>
         <div className="login-ledger" aria-hidden="true">
@@ -146,7 +198,7 @@ export function ForgotPasswordPage({
               ? "Kami akan mengirim tautan atur ulang ke email akun Anda."
               : step === "sent"
                 ? "Halaman kata sandi baru terbuka setelah tautan di email diklik."
-                : "Masukkan kode yang kami kirim, lalu pilih kata sandi baru."}
+                : "Pilih kata sandi baru untuk akun ini."}
           </p>
 
           {step === "request" ? (
@@ -177,40 +229,27 @@ export function ForgotPasswordPage({
               {problem && <p className="login-error" role="alert">{problem}</p>}
               {notice && <p className="login-notice" role="status">{notice}</p>}
               <button className="login-submit" type="submit" disabled={busy}>
-                {busy ? <Loader2 size={17} className="spin" /> : <Mail size={17} />}
                 {busy ? "Mengirim ulang..." : "Kirim ulang tautan"}
+                {busy ? <Loader2 size={17} className="spin" /> : <Mail size={17} />}
               </button>
               <button className="login-back" type="button" onClick={() => setStep("request")}>
                 <ArrowLeft size={13} /> Ganti email
               </button>
-              <button
-                className="login-back"
-                type="button"
-                onClick={() => {
-                  setToken("");
-                  setStep("reset");
-                }}
-              >
-                Tautan tidak bisa diklik? Masukkan kode manual <ArrowRight size={13} />
-              </button>
             </form>
           ) : (
             <form className="login-form" onSubmit={submitReset}>
-              <div className="login-field">
-                <label htmlFor="reset-token">Kode dari email</label>
-                <div className="login-password-wrap">
-                  <input
-                    id="reset-token"
-                    type="password"
-                    value={token}
-                    onChange={(event) => setToken(event.target.value)}
-                    placeholder="Kode 64 karakter"
-                    autoCapitalize="none"
-                    required
-                  />
-                  <KeyRound size={16} />
-                </div>
-              </div>
+              {expiresAt > 0 && (
+                <p className={expired ? "login-deadline is-over" : "login-deadline"}>
+                  {expired ? (
+                    <><AlertTriangle size={14} /> Tautan sudah kedaluwarsa. Minta tautan baru untuk melanjutkan.</>
+                  ) : (
+                    <>
+                      <Clock size={14} />
+                      Tautan berlaku <strong>{clock}</strong> lagi. Setelah itu kode tidak lagi diterima.
+                    </>
+                  )}
+                </p>
+              )}
               <div className="login-field">
                 <label htmlFor="new-password">Kata sandi baru</label>
                 <input
@@ -237,19 +276,46 @@ export function ForgotPasswordPage({
               </div>
               {problem && <p className="login-error" role="alert">{problem}</p>}
               {notice && <p className="login-notice" role="status">{notice}</p>}
-              <button className="login-submit" type="submit" disabled={busy}>
-                {busy ? <Loader2 size={17} className="spin" /> : <KeyRound size={17} />}
-                Simpan kata sandi baru
+              <fieldset className="login-confirm" disabled={expired}>
+                <legend>Sebelum menyimpan, pastikan:</legend>
+                <label className="login-check">
+                  <input
+                    type="checkbox"
+                    checked={confirmed.owner}
+                    onChange={(e) => setConfirmed({ ...confirmed, owner: e.target.checked })}
+                  />
+                  <span>Saya sendiri yang meminta atur ulang kata sandi ini.</span>
+                </label>
+                <label className="login-check">
+                  <input
+                    type="checkbox"
+                    checked={confirmed.sessions}
+                    onChange={(e) => setConfirmed({ ...confirmed, sessions: e.target.checked })}
+                  />
+                  <span>Saya paham seluruh sesi di perangkat lain akan dikeluarkan.</span>
+                </label>
+                <label className="login-check">
+                  <input
+                    type="checkbox"
+                    checked={confirmed.reused}
+                    onChange={(e) => setConfirmed({ ...confirmed, reused: e.target.checked })}
+                  />
+                  <span>Kata sandi baru ini berbeda dari kata sandi lama.</span>
+                </label>
+              </fieldset>
+              <button className="login-submit" type="submit" disabled={busy || expired}>
+                {expired ? "Tautan kedaluwarsa" : busy ? "Menyimpan..." : "Simpan kata sandi baru"}
+                {expired ? <AlertTriangle size={17} /> : busy ? <Loader2 size={17} className="spin" /> : <KeyRound size={17} />}
               </button>
-              <button className="login-back" type="button" onClick={() => setStep("request")}>
-                <ArrowLeft size={13} /> Kirim ulang kode
+              <button className="login-back" type="button" onClick={backToRequest}>
+                <ArrowLeft size={13} /> Kirim ulang tautan
               </button>
             </form>
           )}
 
           <div className="login-secure">
             <ShieldCheck size={15} />
-            <span>Kode hanya berlaku sementara dan hanya untuk akun ini.</span>
+            <span>Kode pada tautan ini hanya berlaku sementara dan hanya untuk akun ini.</span>
           </div>
         </div>
         <button className="login-back login-back-solid" type="button" onClick={onBackToLogin}>

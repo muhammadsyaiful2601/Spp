@@ -48,15 +48,26 @@ class DatabaseSeeder extends Seeder
     /**
      * Create or refresh one seeded account and force it back to unverified.
      *
-     * `updateOrCreate()` only writes fillable attributes, so an existing row
-     * would silently keep a stale `email_verified_at`. The explicit
-     * `forceFill()` is what makes re-seeding reliably reset the gate.
+     * `role` is applied with `forceFill()` rather than through the `$attributes`
+     * array. It is absent from the model's `Fillable` on purpose — that column
+     * is the gate in front of bank details, treasurer management, the audit
+     * trail and the database backup — so mass assignment would quietly drop it
+     * and the seeded `pimpinan` would fall back to the `admin` column default.
+     * Writing it explicitly is what keeps the two seeded roles distinct.
+     *
+     * The same `forceFill()` also resets a stale `email_verified_at`, because
+     * `updateOrCreate()` only writes fillable attributes and would otherwise
+     * leave an already-verified row untouched.
      */
     private function seedUser(string $username, array $attributes): void
     {
+        $role = $attributes['role'];
+        unset($attributes['role']);
+
         $user = User::updateOrCreate(['username' => $username], $attributes);
 
         $user->forceFill([
+            'role' => $role,
             'email_verified_at' => null,
             'email_verification_token' => null,
             'email_verification_sent_at' => null,

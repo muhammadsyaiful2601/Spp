@@ -134,10 +134,28 @@ export function purgeSession(options: { silent?: boolean } = {}): void {
   }
 }
 
+/**
+ * How long the browser waits before giving up on a request.
+ *
+ * This was 8 seconds, which is not a patience problem so much as a diagnosis
+ * problem: the app reported every one of those as "the server cannot be
+ * contacted", so a request that was merely slow — a login whose notification
+ * mail held the response, a report scanning a year of payments — looked exactly
+ * like a dead backend. Sign-in in particular sat right at that edge, so it
+ * failed intermittently and a refresh made it work, which reads as "the server
+ * is flaky" rather than "our timeout is wrong".
+ *
+ * Long enough that ordinary work finishes, short enough that a genuinely dead
+ * host is still reported quickly. Override with VITE_API_TIMEOUT_MS.
+ */
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? 30_000);
+
 export const api = axios.create({
   baseURL: apiBaseUrl,
   headers: { Accept: 'application/json' },
-  timeout: 8000,
+  timeout: Number.isFinite(REQUEST_TIMEOUT_MS) && REQUEST_TIMEOUT_MS > 0
+    ? REQUEST_TIMEOUT_MS
+    : 30_000,
 })
 api.interceptors.request.use((config) => {
   const token = readToken();
@@ -183,9 +201,27 @@ export async function logout(): Promise<void> {
   }
 }
 
-/** True when the API host itself is unreachable, as opposed to a rejected login. */
+/**
+ * True when the API host itself is unreachable, as opposed to a rejected login.
+ *
+ * A timeout counts as unreachable for one reason only: the browser reports both
+ * as a network error, and the user needs to be told which one happened. Telling
+ * them the server is down when it is merely busy sends them off to restart a
+ * process that is running perfectly well, so {@link isTimeout} exists to say the
+ * honest thing instead.
+ */
 export function isNetworkFailure(error: unknown): boolean {
-  return axios.isAxiosError(error) && !error.response
+  return axios.isAxiosError(error) && !error.response && !isTimeout(error)
+}
+
+/**
+ * True when the request was abandoned by us before the server answered.
+ *
+ * The server was reachable — it simply did not reply in time — which is a very
+ * different instruction for the person reading the message.
+ */
+export function isTimeout(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.code === 'ECONNABORTED'
 }
 
 /**
@@ -359,15 +395,6 @@ export async function sendVerificationCode(): Promise<void> {
 
 export async function verifyEmailCode(code: string): Promise<void> {
   await api.post("/auth/verification/verify", { code })
-}
-
-/** True when the API refused an action because the address is unverified. */
-export function isUnverifiedError(error: unknown): boolean {
-  return (
-    axios.isAxiosError(error) &&
-    error.response?.status === 403 &&
-    (error.response.data as { code?: string } | undefined)?.code === "email_unverified"
-  )
 }
 
 export async function changePassword(input: {
@@ -757,6 +784,27 @@ export async function fetchStudentBills(
   return data.data
 }
 
+/**
+ * Register a student on the server.
+ *
+ * `class_level_id` is the primary key rather than the class name: the name is
+ * display text and two levels could read the same once a school renames one.
+ * The response is the stored row joined to its level, which is the only place
+ * the new student's `id` (the primary key every payment needs) comes from.
+ */
+export async function createStudent(input: {
+  nisn: string
+  student_number: string
+  full_name: string
+  class_level_id: number
+}): Promise<{ id: number; student_number: string; nisn: string; full_name: string; class_level: string }> {
+  const { data } = await api.post<{ data: { id: number; student_number: string; nisn: string; full_name: string; class_level: string } }>(
+    '/admin/siswa',
+    input,
+  )
+  return data.data
+}
+
 export type Treasurer = {
   id: number
   name: string
@@ -1008,6 +1056,21 @@ export async function fetchActivityLogs(
     },
     categories: data.categories,
   }
+}
+
+/**
+ * Erase the whole audit trail.
+ *
+ * Returns how many rows were removed, which is the number that existed *before*
+ * the wipe — the single receipt row the server writes afterwards is not part of
+ * it. The caller should say the same, or the toast and the table will disagree.
+ */
+export async function purgeActivityLogs(): Promise<{ deleted: number; message: string }> {
+  const { data } = await api.delete<{ data: { deleted: number }; message: string }>(
+    "/pimpinan/log-aktivitas",
+  )
+
+  return { deleted: data.data.deleted, message: data.message }
 }
 
 /** Download a full SQL backup through the leadership-only endpoint. */

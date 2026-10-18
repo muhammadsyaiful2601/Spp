@@ -104,5 +104,3 @@ export function sessionRemaining(now: number = Date.now()): number | null {
 
   return remaining > 0 ? remaining : null;
 }
-
-export const SESSION_IDLE_MINUTES = IDLE_LIMIT_MINUTES;

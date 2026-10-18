@@ -5,6 +5,7 @@ namespace App\Notifications;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\URL;
@@ -13,20 +14,25 @@ use Illuminate\Support\Str;
 /**
  * "Was this you?" notice sent after every successful sign-in.
  *
- * Deliberately sent synchronously and best-effort from the login path: the
- * deployment runs without a queue worker, so a queued notification would sit
- * in the jobs table forever, and an SMTP outage must never turn working
- * credentials into a failed sign-in.
+ * Queued because sending it inline made sign-in hostage to the mail relay: the
+ * request waited for a whole SMTP conversation (connect, EHLO, STARTTLS, AUTH,
+ * MAIL, DATA), and a slow relay stalled the response long enough for the browser
+ * to report the portal as unreachable. The `timeout` in `config/mail.php` bounds
+ * each socket operation, not the exchange, so it could not save the login.
  *
- * The sign-out action is a *two-step* signed link. A plain GET that revoked
- * sessions would be fired by email scanners and link prefetchers on their own,
- * signing real users out of a perfectly legitimate login just for opening
- * their inbox — so GET only renders a confirmation page and the revocation
- * happens on the POST from that page.
+ * Requires a worker: with `QUEUE_CONNECTION=database` nothing leaves until
+ * `php artisan queue:work` runs (cron entry in CPANEL.md).
+ *
+ * The sign-out action is a two-step signed link. A GET that revoked sessions
+ * would be fired by email scanners on its own, signing real users out merely for
+ * opening their inbox, so GET only renders a confirmation page.
  */
-class LoginAlertNotification extends Notification
+class LoginAlertNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+
+    /** Never retry: a stale sign-in alert is worse than a missing one. */
+    public int $tries = 1;
 
     public function __construct(
         private readonly string $ipAddress,

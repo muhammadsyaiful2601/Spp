@@ -1,12 +1,15 @@
 import type { ModalKind } from "../types";
-import { Plus, X } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 
 export function StudentModal({
   addStudent,
+  busy = false,
   classLevels,
   setModal,
 }: {
   addStudent: (event: React.FormEvent<HTMLFormElement>) => void;
+  /** True while the server call is in flight, so the form cannot be submitted twice. */
+  busy?: boolean;
   classLevels: string[];
   modal: ModalKind;
   setModal: (value: ModalKind) => void;
@@ -81,11 +84,20 @@ export function StudentModal({
                   type="button"
                   className="button button-outline"
                   onClick={() => setModal(null)}
+                  disabled={busy}
                 >
                   Batal
                 </button>
-                <button className="button button-primary" type="submit">
-                  <Plus size={16} /> Simpan siswa
+                <button className="button button-primary" type="submit" disabled={busy}>
+                  {busy ? (
+                    <>
+                      <Loader2 size={16} className="spin" /> Menyimpan...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} /> Simpan siswa
+                    </>
+                  )}
                 </button>
               </div>
             </form>

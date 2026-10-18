@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   CalendarDays,
   ChevronLeft,
@@ -7,6 +8,7 @@ import {
   Loader2,
   Search,
   ShieldAlert,
+  Trash2,
 } from "lucide-react";
 import type { ActivityLogEntry, ActivityLogResult } from "../api";
 import { money } from "../lib/format";
@@ -100,6 +102,7 @@ export function ActivityLogPage({
   onCategoryChange,
   onFromChange,
   onPageChange,
+  onPurge,
   onReset,
   onSearchChange,
   onToChange,
@@ -115,6 +118,8 @@ export function ActivityLogPage({
   onCategoryChange: (value: string) => void;
   onFromChange: (value: string) => void;
   onPageChange: (page: number) => void;
+  /** Erase the entire trail. The server records that it happened. */
+  onPurge: () => Promise<void>;
   onReset: () => void;
   onSearchChange: (value: string) => void;
   onToChange: (value: string) => void;
@@ -128,6 +133,22 @@ export function ActivityLogPage({
   const categories = result?.categories ?? [];
   const totalPages = result?.lastPage ?? 1;
   const filtering = Boolean(search.trim() || category || from || to);
+
+  // The confirmation lives here rather than in App because it is purely local
+  // UI state: it must never survive a wipe, or the next visit would open with
+  // the prompt already open over a table it has not described.
+  const [confirming, setConfirming] = useState(false);
+  const [wiping, setWiping] = useState(false);
+
+  async function purge() {
+    setWiping(true);
+    try {
+      await onPurge();
+      setConfirming(false);
+    } finally {
+      setWiping(false);
+    }
+  }
 
   return (
     <>
@@ -217,8 +238,53 @@ export function ActivityLogPage({
                 </option>
               ))}
             </select>
+            <button
+              className="button button-ghost"
+              type="button"
+              onClick={() => setConfirming(true)}
+              disabled={wiping}
+            >
+              <Trash2 size={15} /> Hapus log
+            </button>
           </div>
         </div>
+        {confirming && (
+          <div className="log-purge-confirm" role="alertdialog" aria-label="Konfirmasi hapus log aktivitas">
+            <div className="log-purge-copy">
+              <strong>Hapus seluruh log aktivitas?</strong>
+              <p>
+                {(summary?.total ?? 0).toLocaleString("id-ID")} baris akan dihapus permanen, termasuk
+                catatan pembayaran, perubahan akun, dan semua jejak lainnya. Tindakan ini tidak
+                dapat dibatalkan.
+              </p>
+              <p className="log-purge-note">
+                Satu baris tetap tersisa: catatan bahwa penghapusan ini dilakukan, oleh siapa,
+                dan berapa baris yang dihapus.
+              </p>
+            </div>
+            <div className="log-purge-actions">
+              <button
+                className="button button-outline"
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={wiping}
+              >
+                Batal
+              </button>
+              <button className="button button-danger" type="button" onClick={() => void purge()} disabled={wiping}>
+                {wiping ? (
+                  <>
+                    <Loader2 size={15} className="spin" /> Menghapus...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={15} /> Ya, hapus semua
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="report-filter-strip log-filter-strip">
           <label className="log-date-field">
             <span>Dari tanggal</span>

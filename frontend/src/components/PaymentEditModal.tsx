@@ -14,9 +14,16 @@ function toLocalInput(value: string): string {
     + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** Grid position (0 = Jul .. 11 = Jun) to the calendar month the API uses. */
+/**
+ * Grid position (0 = Jul .. 11 = Jun) to the calendar month the API uses.
+ *
+ * Only ever applied when *sending* a selection. `context.monthlyAmounts` is
+ * already built in this same academic order, so reading it must use the grid
+ * index untouched — routing it back through this function read July's slot as
+ * January's and priced every one of the twelve months with another month's rate.
+ */
 function toCalendarMonth(index: number): number {
-  return index < 6 ? index + 7 : index - 5;
+  return index < 6 ? index + 7 : index - 5
 }
 
 function toGridIndex(month: number): number {
@@ -76,10 +83,7 @@ export function PaymentEditModal({
   const nothingToSave = !dateChanged && !amountChanged && !monthsChanged;
 
   const previewTotal = isSpp
-    ? months.reduce(
-      (total, index) => total + (context.monthlyAmounts[toCalendarMonth(index) - 1] ?? 0),
-      0,
-    )
+    ? months.reduce((total, index) => total + (context.monthlyAmounts[index] ?? 0), 0)
     : Number(amount);
 
   function submit() {
@@ -147,7 +151,7 @@ export function PaymentEditModal({
                     <small>
                       {isLocked
                         ? "Lunas"
-                        : money(context.monthlyAmounts[toCalendarMonth(index) - 1] ?? 0)}
+                        : money(context.monthlyAmounts[index] ?? 0)}
                     </small>
                   </button>
                 );

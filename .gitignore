@@ -1,0 +1,22 @@
+# Environment files hold real credentials (APP_KEY, SMTP keys, database
+# passwords). The root .env is deliberately tracked, so it is not listed here;
+# what is blocked are the variants that are created by accident and copied around.
+# `backend/.env` is ignored separately in backend/.gitignore.
+.env.*
+!.env.example
+
+# SQLite databases that live in the tree. The migrations build them per machine.
+*.sqlite
+
+# Build output
+node_modules
+frontend/dist
+frontend/.vite
+backend/public/build
+backend/public/hot
+backend/public/storage
+
+# Local logs and dumps
+*.log
+npm-debug.log*
+yarn-error.log*
