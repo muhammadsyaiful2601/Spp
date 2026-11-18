@@ -314,6 +314,18 @@ canEditBranding = true,
             />
           </div>
           <div className="form-field full">
+            <label htmlFor="profile-website">Website</label>
+            <input
+              id="profile-website"
+              type="url"
+              value={profile.website ?? ""}
+              placeholder="https://nama-sekolah.sch.id"
+              onChange={(event) =>
+                setProfile((value) => ({ ...value, website: event.target.value }))
+              }
+            />
+          </div>
+          <div className="form-field full">
             <label htmlFor="profile-note">Catatan pada kuitansi</label>
             <input
               id="profile-note"

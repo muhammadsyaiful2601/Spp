@@ -1633,10 +1633,12 @@ const sppPeriodsQuery = useQuery({
           address: profile.address.trim(),
           phone: profile.phone.trim() || null,
           email: profile.email.trim() || null,
+          website: profile.website?.trim() || null,
           receipt_note: profile.note.trim() || null,
           bank_name: profile.bankName.trim() || null,
           bank_account_number: profile.bankAccountNumber.trim() || null,
           bank_account_holder: profile.bankAccountHolder.trim() || null,
+          receipt_template: profile.receipt_template ?? "standard",
         });
       } catch (error) {
         setToast(
@@ -1651,6 +1653,7 @@ const sppPeriodsQuery = useQuery({
         address: saved.address,
         phone: saved.phone ?? "",
         email: saved.email ?? "",
+        website: saved.website ?? "",
         note: saved.receipt_note ?? "",
         bankName: saved.bank_name ?? "",
         bankAccountNumber: saved.bank_account_number ?? "",

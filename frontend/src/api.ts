@@ -514,24 +514,26 @@ export type SchoolProfileIdentity = {
   address: string
   phone: string | null
   email: string | null
+  website?: string | null
   receipt_note: string | null
   bank_name: string | null
   bank_account_number: string | null
   bank_account_holder: string | null
+  receipt_template?: string | null
 }
 
 /**
  * Persist the identity form to the database (`role:pimpinan`). The endpoint
- * replaces the whole row and the form has no controls for `website` or
- * `receipt_template`, so the current row is read first to carry those values
- * through instead of wiping them on every save.
+ * replaces the whole row and the form carries the editable fields only, so the
+ * server-derived values (`website`, `receipt_template`) are carried through
+ * from the current row instead of being wiped on every save.
  */
 export async function saveSchoolProfile(identity: SchoolProfileIdentity): Promise<SchoolProfile> {
   const current = await fetchSchoolProfile()
   const { data } = await api.post<{ data: SchoolProfile }>('/pimpinan/sekolah-profile', {
     ...identity,
-    website: current.website,
-    receipt_template: current.receipt_template,
+    website: identity.website ?? current.website,
+    receipt_template: identity.receipt_template ?? current.receipt_template,
   })
   return data.data
 }

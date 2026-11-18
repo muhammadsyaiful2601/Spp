@@ -56,6 +56,10 @@ export type Profile = {
   bankName: string;
   bankAccountNumber: string;
   bankAccountHolder: string;
+  /** School website (optional). */
+  website?: string;
+  /** Receipt layout template (optional, defaults to `standard`). */
+  receipt_template?: string;
 };
 
 export type NoticeTone = "amber" | "green" | "blue" | "coral";
