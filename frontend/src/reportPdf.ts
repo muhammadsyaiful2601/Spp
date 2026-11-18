@@ -875,7 +875,14 @@ export async function downloadStudentReport({
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 16;
   const now = new Date();
-  const logoSource = await fetchSchoolLogoDataUrl();
+  // Logo bersifat opsional: kalau tak tersedia atau gagal dimuat, laporan tetap
+  // dicetak tanpa logo daripada membatalkan seluruh proses unduhan.
+  let logoSource: string | null = null;
+  try {
+    logoSource = await fetchSchoolLogoDataUrl();
+  } catch {
+    logoSource = null;
+  }
   const logo = await convertLogoToPng(logoSource ?? "");
   const institutionName = (school.foundation.trim() || school.school.trim())
     .toLocaleUpperCase("id-ID");
