@@ -14,6 +14,14 @@ use Illuminate\Support\Facades\Hash;
  * years, positions and SPP periods are inserted by migration
  * `2026_10_01_070000_seed_school_reference_data` because the portal cannot
  * function without them.
+ *
+ * Untuk data dummy siswa, tagihan, dan transaksi (180 siswa, 3 tahun ajaran),
+ * jalankan terpisah:
+ *
+ *     php artisan db:seed --class=DummyHistorySeeder
+ *
+ * Idempoten: aman dijalankan berulang kali, dan tidak dipanggil otomatis oleh
+ * DatabaseSeeder agar test suite tetap cepat dan deterministik.
  */
 class DatabaseSeeder extends Seeder
 {
@@ -28,20 +36,47 @@ class DatabaseSeeder extends Seeder
         // ready-to-use session on an address nobody proved they own, which is
         // exactly what the verification gate exists to prevent. Instead the first
         // sign-in has to redirect to the profile screen and confirm a real inbox.
-        $account = [
+        $this->seedUser('admin', [
             'name' => 'Admin Keuangan',
             'email' => 'admin@example.test',
             'password' => Hash::make('password'),
             'role' => 'admin',
-        ];
-
-        $this->seedUser('admin', $account);
+        ]);
 
         $this->seedUser('pimpinan', [
-            ...$account,
             'name' => 'Pimpinan Sekolah',
             'email' => 'pimpinan@example.test',
+            'password' => Hash::make('password'),
             'role' => 'pimpinan',
+        ]);
+
+        // Bendahara tambahan untuk diuji pada halaman pembayaran dan laporan,
+        // sehingga data dummy tidak hanya satu akun. Nama pengguna sengaja
+        // dibedakan dari yang dipakai tes (bendahara2, bendahara3, dst.).
+        // Hanya `admin` yang aktif setelah seeding; yang lain nonaktif agar uji
+        // "last active treasurer" tetap deterministik.
+        $this->seedUser('bendahara-seed-1', [
+            'name' => 'Bendahara Satu',
+            'email' => 'bendahara-seed-1@example.test',
+            'password' => Hash::make('password'),
+            'role' => 'admin',
+            'is_active' => false,
+        ]);
+
+        $this->seedUser('bendahara-seed-2', [
+            'name' => 'Bendahara Dua',
+            'email' => 'bendahara-seed-2@example.test',
+            'password' => Hash::make('password'),
+            'role' => 'admin',
+            'is_active' => false,
+        ]);
+
+        $this->seedUser('bendahara-seed-3', [
+            'name' => 'Bendahara Tiga',
+            'email' => 'bendahara-seed-3@example.test',
+            'password' => Hash::make('password'),
+            'role' => 'admin',
+            'is_active' => false,
         ]);
     }
 
@@ -62,12 +97,14 @@ class DatabaseSeeder extends Seeder
     private function seedUser(string $username, array $attributes): void
     {
         $role = $attributes['role'];
-        unset($attributes['role']);
+        $isActive = $attributes['is_active'] ?? true;
+        unset($attributes['role'], $attributes['is_active']);
 
         $user = User::updateOrCreate(['username' => $username], $attributes);
 
         $user->forceFill([
             'role' => $role,
+            'is_active' => $isActive,
             'email_verified_at' => null,
             'email_verification_token' => null,
             'email_verification_sent_at' => null,

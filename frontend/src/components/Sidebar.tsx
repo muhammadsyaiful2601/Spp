@@ -4,12 +4,13 @@ import type { LucideIcon } from "lucide-react";
 export type NavLink = { id: Page; text: string; icon: LucideIcon };
 export type NavGroup = { label: string; links: NavLink[] };
 import type { AuthUser } from "../api";
-import { ChevronDown, LogOut, Sparkles, X } from "lucide-react";
+import { ChevronDown, LogOut, Sparkles, X, AlertTriangle } from "lucide-react";
 import { MosqueMark, StarMotif } from "./icons";
 import Avatar from "./Avatar";
 
 export function Sidebar({
   currentUser,
+  emailVerified,
   handleLogout,
   mobileNav,
   navGroups,
@@ -19,6 +20,7 @@ export function Sidebar({
   setPage,
 }: {
   currentUser: AuthUser;
+  emailVerified: boolean;
   handleLogout: () => void;
   mobileNav: boolean;
   navGroups: NavGroup[];
@@ -107,6 +109,11 @@ export function Sidebar({
                     @{currentUser.username} ·{" "}
                     {currentUser.role === "pimpinan" ? "Pimpinan" : "Bendahara"}
                   </span>
+                  {!emailVerified && (
+                    <span className="user-unverified">
+                      <AlertTriangle size={12} /> Email belum diverifikasi
+                    </span>
+                  )}
                 </span>
               </button>
               <button

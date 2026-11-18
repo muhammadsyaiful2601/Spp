@@ -41,7 +41,6 @@ class VerificationController extends Controller
             ]);
         }
 
-        $ttl = (int) config('auth.verification.code_ttl_minutes', 30);
         $cooldown = (int) config('auth.verification.resend_cooldown_minutes', 2);
 
         // Throttle resends so this cannot be used to mail-bomb an address. The
@@ -50,10 +49,12 @@ class VerificationController extends Controller
         // been mis-delivered could not be replaced while the clock was fresh.
         $sentAt = $user->email_verification_sent_at;
         if ($sentAt && $sentAt->gt(now()->subMinutes($cooldown))) {
-            $wait = (int) ceil($sentAt->diffInMinutes(now(), true));
+            $elapsedSeconds = (int) now()->diffInSeconds($sentAt, true);
+            $remainingSeconds = max(1, ($cooldown * 60) - $elapsedSeconds);
+            $wait = (int) ceil($remainingSeconds / 60);
             return response()->json([
                 'message' => "Kode baru belum dapat diminta. Coba lagi dalam {$wait} menit.",
-                'data' => ['cooldown' => true, 'retry_after_seconds' => $wait * 60],
+                'data' => ['cooldown' => true, 'retry_after_seconds' => $remainingSeconds],
             ], 429);
         }
 

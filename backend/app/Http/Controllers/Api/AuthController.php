@@ -25,6 +25,9 @@ class AuthController extends Controller
         $credentials = $request->validate([
             'username' => ['required', 'string'],
             'password' => ['required', 'string'],
+        ], [
+            'username.required' => 'Username wajib diisi.',
+            'password.required' => 'Kata sandi wajib diisi.',
         ]);
 
         // The guard is named explicitly rather than left to the default.
@@ -72,13 +75,14 @@ class AuthController extends Controller
 
         ActivityLogger::record('akun.masuk', 'akun', 'Masuk ke portal.');
 
-        // Queued, so this only writes a row in the jobs table. Sent inline it used to
-        // hold the response for a whole SMTP exchange, and a slow relay made
-        // sign-in fail with "Server tidak dapat dihubungi" while the server was
-        // perfectly healthy. Deferred so the row lands outside the request.
-        defer(fn () => $this->sendLoginAlert($request, $user));
+        // Queued via the notification's ShouldQueue contract: the response is
+        // returned before the SMTP exchange happens, so a slow mail relay never
+        // stalls sign-in. A queue worker must be running (QUEUE_CONNECTION=database
+        // with `php artisan queue:work`, cron entry in CPANEL.md) or the job sits
+        // in the jobs table until one is started.
+        $this->sendLoginAlert($request, $user);
 
-        return response()->json(['data' => ['user' => $user, 'token' => $token, 'token_type' => 'Bearer']]);
+        return response()->json(['data' => ['user' => $this->present($user), 'token' => $token, 'token_type' => 'Bearer']]);
     }
 
     public function logout(Request $request): JsonResponse
@@ -302,10 +306,10 @@ class AuthController extends Controller
      * reaches a real inbox, and the seeded placeholder domains would only bounce
      * or train people to ignore these alerts.
      *
-     * Failures are reported, never thrown — the sign-in itself already
-     * succeeded, and an SMTP outage must not turn working credentials into a
-     * 500. Sent synchronously on purpose: this deployment runs without a queue
-     * worker, so a queued notification would sit in the jobs table forever.
+     * The notification implements `ShouldQueue`, so `Notification::send` below
+     * dispatches a job instead of an SMTP exchange. Failures are reported, never
+     * thrown — the sign-in itself already succeeded, and an SMTP outage must not
+     * turn working credentials into a 500.
      */
     private function sendLoginAlert(Request $request, User $user): void
     {

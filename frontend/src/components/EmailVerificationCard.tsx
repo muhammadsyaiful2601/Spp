@@ -71,10 +71,11 @@ export function EmailVerificationCard({
         <ShieldAlert size={19} />
       </div>
       <div className="verify-body">
-        <strong>Verifikasi alamat email</strong>
+        <strong>Email belum diverifikasi</strong>
         <span>
-          Fitur lain masih dinonaktifkan. Pastikan alamat di bawah benar dan bisa
-          menerima email, lalu kirim kode untuk mengaktifkan portal.
+          Verifikasi alamat email sebelum mengakses fitur lain. Pastikan alamat di
+          bawah benar dan bisa menerima email, lalu kirim kode untuk mengaktifkan
+          portal.
         </span>
 
         <div className="verify-email">

@@ -32,6 +32,7 @@ createStudent,
   fetchPaymentReport,
   purgeActivityLogs,
   fetchPortalData,
+  fetchPaginatedStudents,
   fetchStudentBills,
   fetchPublicSchoolProfile,
   fetchTreasurers,
@@ -205,6 +206,8 @@ function App() {
     readLocal("cendekia-spp-amounts", initialSppRates),
   );
   const [search, setSearch] = useState("");
+  const [studentPage, setStudentPage] = useState(1);
+  const [studentSearch, setStudentSearch] = useState("");
   const [selected, setSelected] = useState<Student | null>(null);
   const [modal, setModal] = useState<"payment" | "student" | "receipt" | null>(
     null,
@@ -332,6 +335,20 @@ function App() {
     // produced a guaranteed error that lingered in the cache and made the next
     // refetch look like a failure.
     enabled: Boolean(currentUser) && emailVerified,
+  });
+
+  // Server-side pagination for the siswa list. The `/admin/siswa` endpoint
+  // already paginates (25 per page) and supports `search`; the frontend was
+  // loading every student from `/data/portal` and slicing client-side instead.
+  const studentPageQuery = useQuery({
+    queryKey: ["paginated-students", effectiveYearId, studentPage, studentSearch],
+    queryFn: () =>
+      fetchPaginatedStudents({
+        page: studentPage,
+        per_page: 10,
+        search: studentSearch,
+      }),
+    enabled: Boolean(currentUser) && emailVerified && effectivePage === "siswa",
   });
 
   // Which screen the user is actually looking at. Used below to keep expensive
@@ -494,9 +511,9 @@ useEffect(() => {
     [portalQuery.data],
   );
 
-  // Tariff reads are shared with `admin` (the treasurer role owns the amounts),
-// so the queries run for both. The server enforces the same rule; a mismatch
-// would only ever surface as a 403 in the UI.
+  // Tariff reads and writes are leadership-only: the backend enforces
+  // `role:pimpinan` on every pricing endpoint. The menu above is hidden for
+  // `admin`, so these queries never fire for a treasurer session.
 const sppPeriodsQuery = useQuery({
     queryKey: ["spp-periods", effectiveYearId],
     queryFn: () => fetchSppPeriods(effectiveYearId),
@@ -1023,15 +1040,13 @@ const sppPeriodsQuery = useQuery({
         {
           label: "PREFERENSI",
           links: [
-            // Tariffs are shared: the treasurer records the payments these
-            // amounts produce, so `admin` gets the pricing screen too.
-            {
-              id: "pengaturan" as Page,
-              text: "Pengaturan tarif",
-              icon: SlidersHorizontal,
-            },
             ...(currentUser?.role === "pimpinan"
               ? [
+                  {
+                    id: "pengaturan" as Page,
+                    text: "Pengaturan tarif",
+                    icon: SlidersHorizontal,
+                  },
                   { id: "profil" as Page, text: "Profil sekolah", icon: Building2 },
                   { id: "bendahara" as Page, text: "Kelola bendahara", icon: Wallet },
                   { id: "log" as Page, text: "Log aktivitas", icon: History },
@@ -1049,6 +1064,27 @@ const sppPeriodsQuery = useQuery({
           links: [{ id: "profil" as Page, text: "Verifikasi email", icon: UserCog }],
         },
       ];
+  // Paginated students from `/admin/siswa`, enriched with payment/arrears data
+  // already loaded from `/data/portal` (matched by student id). Server handles
+  // pagination + search so the frontend never pulls hundreds of rows at once.
+  const serverStudents = studentPageQuery.data?.data ?? [];
+  const paginatedStudents = serverStudents.map((serverStudent) => {
+    const local = students.find((s) => String(s.dbId) === String(serverStudent.id));
+    return {
+      id: String(serverStudent.id),
+      dbId: serverStudent.id,
+      name: serverStudent.full_name,
+      className: serverStudent.class_level,
+      nisn: serverStudent.nisn,
+      paid: local?.paid ?? [],
+      sppArrears: local?.sppArrears,
+      nonSppArrears: local?.nonSppArrears,
+      sppUnpaidCount: local?.sppUnpaidCount,
+      sppTotalCount: local?.sppTotalCount,
+    };
+  });
+  // Payment page filters the local student roster by the search box before
+  // passing it to PaymentPage, which handles its own pagination.
   const filteredStudents = students.filter((student) =>
     `${student.name} ${student.id} ${student.nisn} ${student.className}`
       .toLowerCase()
@@ -2018,6 +2054,7 @@ async function handlePhotoUpload(file: File) {
               setRecoverNotice(
                 "Jika data tersebut terdaftar, tautan atur ulang sudah dikirim ke email akun.",
               );
+              setToast("Tautan atur ulang sudah dikirim ke email Anda.");
             } catch (error) {
               // A 429 here means this IP asked too often — the request may
               // never have reached the mailer, so the generic "failed" wording
@@ -2092,11 +2129,18 @@ async function handlePhotoUpload(file: File) {
             // A timeout is a fourth: the server answered nothing in time but is
             // very much alive, and telling someone to go restart it sends them
             // off to fix a process that was working.
+            //
+            // `isNetworkFailure` also catches a response the browser threw away
+            // because the origin is not on the backend's CORS list — which is what
+            // happens whenever Vite drifts off port 5173 while `CORS_ALLOWED_ORIGINS`
+            // still names 5173. The backend logs the 200 all the same, so "restart
+            // the backend" is the one instruction that cannot be right: the request
+            // reached it. Name the second cause instead of assuming the only one.
             setAuthError(
               isTimeout(error)
                 ? "Server terlalu lama menjawab. Coba lagi sebentar."
                 : isNetworkFailure(error)
-                  ? "Server tidak dapat dihubungi. Pastikan backend berjalan, lalu coba lagi."
+                  ? "Server tidak dapat dihubungi. Kalau backend sudah berjalan, periksa asal halaman ini: port Vite harus sama dengan CORS_ALLOWED_ORIGINS di .env."
                   : isRateLimited(error)
                     ? "Terlalu banyak percobaan login. Tunggu satu menit, lalu coba lagi."
                     : "Username atau kata sandi tidak sesuai.",
@@ -2113,6 +2157,7 @@ async function handlePhotoUpload(file: File) {
     <div className="app-shell">
       <Sidebar
         currentUser={currentUser}
+        emailVerified={emailVerified}
         profile={profile}
         page={page}
         navGroups={navGroups}
@@ -2217,11 +2262,18 @@ async function handlePhotoUpload(file: File) {
           )}
           {effectivePage === "siswa" && (
             <StudentsPage
-              students={filteredStudents}
+              students={paginatedStudents}
+              total={studentPageQuery.data?.meta?.total ?? 0}
+              currentPage={studentPageQuery.data?.meta?.current_page ?? 1}
+              perPage={studentPageQuery.data?.meta?.per_page ?? 10}
+              onPageChange={setStudentPage}
               sppAmounts={sppAmounts}
               classLevels={classLevels}
-              search={search}
-              setSearch={setSearch}
+              search={studentSearch}
+              setSearch={(value) => {
+                setStudentSearch(value);
+                setStudentPage(1);
+              }}
               onPay={openPayment}
               onReport={(student, mode, printWindow) =>
                 void exportStudentReport(student, mode, printWindow)
@@ -2232,18 +2284,18 @@ async function handlePhotoUpload(file: File) {
           {effectivePage === "pembayaran" && (
             <PaymentPage
               students={filteredStudents}
-              sppAmounts={sppAmounts}
-              classLevels={classLevels}
-              search={search}
-              setSearch={setSearch}
-              onPay={openPayment}
-              onEditPayment={openEditPayment}
-              academicYears={academicYears}
-              selectedYearId={effectiveYearId}
-              onSelectYear={selectYear}
-            />
-          )}
-          {effectivePage === "laporan" && (
+                sppAmounts={sppAmounts}
+                classLevels={classLevels}
+                search={search}
+                setSearch={setSearch}
+                onPay={openPayment}
+                onEditPayment={openEditPayment}
+                academicYears={academicYears}
+                selectedYearId={effectiveYearId}
+                onSelectYear={selectYear}
+              />
+            )}
+            {effectivePage === "laporan" && (
             <ReportsPage
               rows={reportRows}
               loading={paymentReportQuery.isLoading}

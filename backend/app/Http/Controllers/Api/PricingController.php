@@ -62,13 +62,19 @@ class PricingController extends Controller
     public function positionRates(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'academic_year_id' => ['required', 'exists:academic_years,id'],
+            'academic_year_id' => ['nullable', 'integer', 'exists:academic_years,id'],
+        ], [
+            'academic_year_id.exists' => 'Tahun ajaran tidak ditemukan.',
         ]);
+
+        $yearId = (int) ($data['academic_year_id'] ?? 0)
+            ?: DB::table('academic_years')->where('is_active', true)->value('id');
+
         $rates = DB::table('position_rates')
             ->join('payment_positions', 'payment_positions.id', '=', 'position_rates.payment_position_id')
             ->join('academic_years', 'academic_years.id', '=', 'position_rates.academic_year_id')
             ->join('class_levels', 'class_levels.id', '=', 'position_rates.class_level_id')
-            ->where('position_rates.academic_year_id', $data['academic_year_id'])
+            ->where('position_rates.academic_year_id', $yearId)
             ->select('position_rates.*', 'payment_positions.name as position', 'payment_positions.type', 'payment_positions.is_active', 'academic_years.name as academic_year', 'class_levels.name as class_level')
             ->orderBy('class_levels.sort_order')
             ->orderBy('payment_positions.name')

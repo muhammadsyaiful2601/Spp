@@ -189,6 +189,30 @@ function nipLine(nip?: string | null): string {
   return value ? `NIP. ${value}` : "NIP. ..............................";
 }
 
+/**
+ * Space kept clear at the bottom of every page for the page-number footer. The
+ * footer is a single 7pt line drawn 7mm from the trim, so it occupies roughly
+ * the last 10mm. Tables used to reserve 34mm for it, which cost about a row and
+ * a half per page and added a full page to a 500-row report for no gain.
+ */
+const FOOTER_RESERVE = 14;
+
+/**
+ * Real height of `drawSignatureBlock`: two 9pt lines, the 22mm signing gap, the
+ * signer name and the NIP — 46mm once the place/date line wraps, plus the 2mm
+ * the last line needs to clear the descenders. The old guard assumed 44mm,
+ * which let the NIP land on top of the footer.
+ */
+const SIGNATURE_HEIGHT = 48;
+
+/** True when a block of `height` starting at `y` clears the footer. */
+function fitsAboveFooter(y: number, height: number, pageHeight: number): boolean {
+  return y + height <= pageHeight - FOOTER_RESERVE;
+}
+
+/** The 8pt subheading that introduces each extra section, plus its table head. */
+const SECTION_HEADER_HEIGHT = 11;
+
 function drawSignatureBlock(
   pdf: jsPDF,
   {
@@ -215,7 +239,7 @@ function drawSignatureBlock(
   },
 ): void {
   let signY = startY;
-  if (signY + 44 > pageHeight - 8) {
+  if (!fitsAboveFooter(signY, SIGNATURE_HEIGHT, pageHeight)) {
     pdf.addPage();
     signY = 20;
   }
@@ -460,7 +484,7 @@ export async function downloadPaymentReport({
         { content: "", colSpan: 2 },
       ],
     ],
-    margin: { left: margin, right: margin, bottom: 34 },
+    margin: { left: margin, right: margin, bottom: FOOTER_RESERVE },
     theme: "grid",
     styles: {
       font: "helvetica",
@@ -497,13 +521,24 @@ export async function downloadPaymentReport({
   });
   }
 
-  // Only start a new page when something already used page one. With the payment
-  // list switched off, page one would otherwise hold nothing but the letterhead
-  // and the report would waste a sheet of paper saying nothing.
+  // The next section follows the payment list on the same page whenever the list
+  // left room for it. Only a list that actually reached the bottom of the page
+  // forces a break. Breaking unconditionally — which is what this did — burned a
+  // page on every filtered report: a 15-row month left the bottom two thirds of
+  // page one empty, then bill status and arrears started over on page two.
   let nextSectionY = 20;
   if (show.billStatus || show.arrears) {
-    if (show.payments) {
-      pdf.addPage();
+    const paymentsEnd = show.payments
+      ? (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY
+      : undefined;
+    if (typeof paymentsEnd === "number") {
+      // 14mm of air after the previous table, then the heading block, then enough
+      // rows that the section reads as a section rather than as a stray heading.
+      if (fitsAboveFooter(paymentsEnd + 14, SECTION_HEADER_HEIGHT + 20, pageHeight)) {
+        nextSectionY = paymentsEnd + 14;
+      } else {
+        pdf.addPage();
+      }
     } else {
       nextSectionY = tableStart + 4;
     }
@@ -563,7 +598,7 @@ export async function downloadPaymentReport({
         { content: "", styles: {} },
       ],
     ],
-    margin: { left: margin, right: margin, bottom: 34 },
+    margin: { left: margin, right: margin, bottom: FOOTER_RESERVE },
     theme: "grid",
     styles: {
       font: "helvetica",
@@ -608,7 +643,7 @@ if (show.arrears) {
         arrearsY = finalY + 14;
       }
     }
-    if (arrearsY + 40 > pageHeight - 20) {
+    if (!fitsAboveFooter(arrearsY, SECTION_HEADER_HEIGHT + 25, pageHeight)) {
       pdf.addPage();
       arrearsY = 20;
     }
@@ -649,7 +684,7 @@ if (show.arrears) {
           { content: rupiah(totalArrears), styles: { halign: "right", fontStyle: "bold" } },
         ],
       ],
-      margin: { left: margin, right: margin, bottom: 34 },
+      margin: { left: margin, right: margin, bottom: FOOTER_RESERVE },
       theme: "grid",
       styles: {
         font: "helvetica",
@@ -686,8 +721,10 @@ if (show.arrears) {
   if (show.payments || show.arrears) {
     const tableEnd = (pdf as jsPDF & { lastAutoTable?: { finalY: number } })
       .lastAutoTable?.finalY ?? 80;
+    const recapHeight = show.payments && show.arrears ? 24 : 12;
     let recapY = tableEnd + 10;
-    if (recapY + 28 > pageHeight - 48) {
+    // The signature follows the recap, so the recap only stays here when both fit.
+    if (!fitsAboveFooter(recapY, recapHeight + 14 + SIGNATURE_HEIGHT, pageHeight)) {
       pdf.addPage();
       recapY = 20;
     }
@@ -719,7 +756,7 @@ if (show.arrears) {
         recapY + (show.payments ? 11 : 6),
       );
     }
-    recapEnd = recapY + (show.payments && show.arrears ? 24 : 12);
+    recapEnd = recapY + recapHeight;
   }
 
   // The signature block is always printed: a report without it is not a document
@@ -998,7 +1035,7 @@ export async function downloadStudentReport({
       { content: rupiah(totalPaid), styles: { halign: "right", fontStyle: "bold" } },
       { content: "" },
     ]],
-    margin: { left: margin, right: margin, bottom: 25 },
+    margin: { left: margin, right: margin, bottom: FOOTER_RESERVE },
     theme: "grid",
     styles: {
       font: "helvetica",

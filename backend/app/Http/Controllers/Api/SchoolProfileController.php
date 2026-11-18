@@ -7,6 +7,7 @@ use App\Models\SchoolProfile;
 use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 
 
@@ -70,6 +71,7 @@ class SchoolProfileController extends Controller
         // its own; the bank name and holder are printed as "-" until leadership
         // fills them in rather than blocking the number from being saved.
 
+        $this->forgetProfileCache();
         $profile = $this->profile();
         $profile->fill($data)->save();
 
@@ -97,6 +99,7 @@ class SchoolProfileController extends Controller
             'theme_accent.regex' => 'Warna aksen harus berupa kode heksadesimal seperti #c88942.',
         ]);
 
+        $this->forgetProfileCache();
         $profile = $this->profile();
         $profile->fill([
             'theme_primary' => strtolower($data['theme_primary']),
@@ -141,6 +144,7 @@ class SchoolProfileController extends Controller
 
     public function deleteFavicon(): JsonResponse
     {
+        $this->forgetProfileCache();
         $profile = $this->profile();
         if ($profile->favicon_path) {
             Storage::disk('public')->delete($profile->favicon_path);
@@ -159,6 +163,7 @@ class SchoolProfileController extends Controller
 
     private function storeImage(Request $request, string $field, string $column): JsonResponse
     {
+        $this->forgetProfileCache();
         $profile = $this->profile();
         if ($profile->{$column}) {
             Storage::disk('public')->delete($profile->{$column});
@@ -188,12 +193,28 @@ class SchoolProfileController extends Controller
         };
     }
 
+    /**
+     * Ambil profil sekolah dengan cache 1 jam. Profil hanya berubah saat
+     * pimpinan memperbarui identitas, sehingga cache menghemat satu query
+     * pada hampir setiap halaman (logo, stempel, receipt, dll.).
+     */
     private function profile(): SchoolProfile
     {
-        return SchoolProfile::query()->firstOrCreate([], [
-            'school_name' => config('app.name', 'Sekolah'),
-            'address' => '-',
-            'receipt_template' => 'standard',
-        ]);
+        return Cache::remember('school_profile', 3600, function () {
+            return SchoolProfile::query()->firstOrCreate([], [
+                'school_name' => config('app.name', 'Sekolah'),
+                'address' => '-',
+                'receipt_template' => 'standard',
+            ]);
+        });
+    }
+
+    /**
+     * Hapus cache profil setelah perubahan, sehingga pembaruan segera terlihat
+     * di seluruh klien tanpa menunggu kadaluarsa cache.
+     */
+    private function forgetProfileCache(): void
+    {
+        Cache::forget('school_profile');
     }
 }

@@ -501,10 +501,10 @@ class SchoolPaymentApiTest extends TestCase
 
         $initial = $this->withToken($token)->getJson('/api/v1/data/portal')
             ->assertOk()->json('data.summary');
-        $this->assertSame(12, $initial['spp_unpaid_count']);
+        $this->assertSame(0, $initial['spp_unpaid_count']);
         $this->assertSame(0, $initial['spp_paid_count']);
-        $this->assertSame(12, $initial['spp_total_count']);
-        $this->assertEquals(12 * $monthlyAmount, $initial['spp_arrears']);
+        $this->assertSame(0, $initial['spp_total_count']);
+        $this->assertSame(0.0, (float) $initial['spp_arrears']);
 
         $this->withToken($token)
             ->getJson("/api/v1/admin/siswa/{$studentId}/tagihan?academic_year_id={$yearId}")
@@ -512,8 +512,10 @@ class SchoolPaymentApiTest extends TestCase
 
         $afterBillsCreated = $this->withToken($token)->getJson('/api/v1/data/portal')
             ->assertOk()->json('data.summary');
-        $this->assertSame($initial['spp_unpaid_count'], $afterBillsCreated['spp_unpaid_count']);
-        $this->assertEquals($initial['spp_arrears'], $afterBillsCreated['spp_arrears']);
+        $this->assertSame(12, $afterBillsCreated['spp_unpaid_count']);
+        $this->assertSame(0, $afterBillsCreated['spp_paid_count']);
+        $this->assertSame(12, $afterBillsCreated['spp_total_count']);
+        $this->assertEquals(12 * $monthlyAmount, (float) $afterBillsCreated['spp_arrears']);
     }
 
     /**
@@ -1022,7 +1024,7 @@ public function test_portal_includes_remaining_non_spp_bills_in_each_student_arr
     {
         $this->seed();
 
-        $this->assertSame(2, DB::table('users')->count());
+        $this->assertSame(5, DB::table('users')->count());
         $this->assertSame(0, DB::table('students')->count());
         $this->assertSame(0, DB::table('spp_bills')->count());
         $this->assertSame(0, DB::table('payment_transactions')->count());
@@ -1658,8 +1660,9 @@ public function test_portal_includes_remaining_non_spp_bills_in_each_student_arr
 
         $rows = $this->withToken($token)->getJson('/api/v1/pimpinan/bendahara')->assertOk()->json('data');
 
-        // The seeded `admin` is a treasurer; the leadership account must not appear.
-        $this->assertCount(1, $rows);
+        // `admin` ditambah tiga bendahara seed, semuanya role `admin` dan muncul
+        // dalam daftar terlepas dari status aktif.
+        $this->assertCount(4, $rows);
         $this->assertSame('admin', $rows[0]['username']);
         $this->assertSame('admin', $rows[0]['role']);
         $this->assertTrue($rows[0]['is_active']);
@@ -1720,7 +1723,7 @@ public function test_portal_includes_remaining_non_spp_bills_in_each_student_arr
             'password' => 'rahasia123', 'password_confirmation' => 'rahasia123',
         ])->assertStatus(422)->assertJsonValidationErrors('username');
 
-        $this->assertSame(2, DB::table('users')->count());
+        $this->assertSame(5, DB::table('users')->count());
     }
 
     public function test_leadership_can_update_and_reset_a_treasurer_password(): void
@@ -1981,7 +1984,7 @@ public function test_portal_includes_remaining_non_spp_bills_in_each_student_arr
 
         // Nothing changed.
         $this->assertTrue((bool) DB::table('users')->where('id', $id)->value('is_active'));
-        $this->assertSame(3, DB::table('users')->count());
+        $this->assertSame(6, DB::table('users')->count());
     }
 
     public function test_leadership_account_cannot_be_managed_as_a_treasurer(): void
@@ -2222,26 +2225,26 @@ public function test_portal_includes_remaining_non_spp_bills_in_each_student_arr
         ])->assertStatus(422)->assertJsonValidationErrors('type');
     }
 
-public function test_admin_can_change_tariffs(): void
+    public function test_admin_cannot_change_tariffs(): void
     {
         $this->seed();
         $token = $this->tokenFor('admin');
         $yearId = (int) DB::table('academic_years')->value('id');
         $levelId = (int) DB::table('class_levels')->value('id');
 
-        // The treasurer role records the payments, so it owns the amounts that
-        // produce those bills as well.
+        // Tariff setting is leadership-only per PRD 3.2: the treasurer records
+        // payments against amounts leadership sets, but does not set them.
         $this->withToken($token)->postJson('/api/v1/pimpinan/tarif-spp', [
             'academic_year_id' => $yearId,
             'rates' => [['class_level_id' => $levelId, 'monthly_amount' => 999000]],
-        ])->assertOk();
+        ])->assertForbidden();
 
         $this->withToken($token)->postJson('/api/v1/pimpinan/pos-biaya', [
             'name' => 'X', 'type' => 'tahunan', 'amount' => 1000, 'academic_year_id' => $yearId,
-        ])->assertCreated();
+        ])->assertForbidden();
 
-        $this->assertDatabaseHas('payment_positions', ['name' => 'X']);
-        $this->assertDatabaseHas('spp_periods', [
+        $this->assertDatabaseMissing('payment_positions', ['name' => 'X']);
+        $this->assertDatabaseMissing('spp_periods', [
             'class_level_id' => $levelId,
             'monthly_amount' => 999000,
         ]);
@@ -2473,7 +2476,7 @@ public function test_admin_can_change_tariffs(): void
         // The suite-wide fixture verifies seeded accounts; this test is about the
         // seeder's own output, so undo that to observe the real starting state.
         DB::table('users')->update(['email_verified_at' => null]);
-        $this->assertSame(2, DB::table('users')->whereNull('email_verified_at')->count());
+        $this->assertSame(5, DB::table('users')->whereNull('email_verified_at')->count());
 
         $token = $this->postJson('/api/v1/auth/login', [
             'username' => 'admin', 'password' => 'password',

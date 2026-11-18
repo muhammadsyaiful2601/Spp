@@ -96,12 +96,11 @@ Route::prefix('v1')->group(function () {
                     ->middleware('throttle:5,1');
             });
 
-            // Pricing is shared: `admin` (the treasurer role) records the payments,
-            // so it also owns the amounts that produce those bills. These stay
-            // under the historical `/pimpinan` prefix to keep already-deployed
-            // bundles working, but the gate is deliberately wider than the rest
-            // of that prefix — leadership-only routes stay in the group above.
-            Route::prefix('pimpinan')->middleware('role:pimpinan,admin')->group(function () {
+            // Tariff setting is leadership-only per PRD 3.2 (Khusus Pimpinan).
+            // The treasurer records payments against the amounts leadership sets;
+            // it does not set the amounts itself. These stay under the historical
+            // `/pimpinan` prefix to keep already-deployed bundles working.
+            Route::prefix('pimpinan')->middleware('role:pimpinan')->group(function () {
                 Route::get('/spp-periode', [PricingController::class, 'sppIndex']);
                 Route::post('/spp-periode', [PricingController::class, 'saveSppPeriod']);
                 Route::get('/tarif-spp', [PricingController::class, 'sppIndex']);

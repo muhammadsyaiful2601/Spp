@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { MosqueMark, StarMotif } from "./icons";
 
 
@@ -104,8 +104,17 @@ export function LoginPage({
             </div>
             {error && <p className="login-error" role="alert">{error}</p>}
             <button className="login-submit" type="submit" disabled={submitting}>
-              {submitting ? "Memverifikasi..." : "Masuk ke portal"}
-              <ArrowRight size={17} />
+              {submitting ? (
+                <>
+                  <Loader2 size={16} className="spin" />
+                  Memverifikasi...
+                </>
+              ) : (
+                <>
+                  Masuk ke portal
+                  <ArrowRight size={17} />
+                </>
+              )}
             </button>
           </form>
           <button className="login-link" type="button" onClick={onForgotPassword}>

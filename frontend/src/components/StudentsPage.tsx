@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   ArrowUpRight,
   ChevronLeft,
@@ -11,10 +10,12 @@ import type { Student } from "../types";
 import { money } from "../lib/format";
 import { studentSppAmount } from "../lib/students";
 
-
-
 export function StudentsPage({
   students,
+  total,
+  currentPage,
+  perPage,
+  onPageChange,
   sppAmounts,
   classLevels,
   search,
@@ -24,6 +25,10 @@ export function StudentsPage({
   reportBusy,
 }: {
   students: Student[];
+  total: number;
+  currentPage: number;
+  perPage: number;
+  onPageChange: (page: number) => void;
   sppAmounts: number[];
   classLevels: string[];
   search: string;
@@ -36,21 +41,15 @@ export function StudentsPage({
   ) => void;
   reportBusy: boolean;
 }) {
-  const pageSize = 10;
-  const [studentPage, setStudentPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(students.length / pageSize));
-  const currentPage = Math.min(studentPage, totalPages);
-  const visibleStudents = students.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize,
-  );
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(1, currentPage), totalPages);
 
   return (
     <section className="panel listing-panel">
       <div className="list-toolbar">
         <div>
           <h2>
-            Semua siswa <span className="count-badge">{students.length}</span>
+            Semua siswa <span className="count-badge">{total}</span>
           </h2>
           <p>Tahun ajaran 2026 / 2027</p>
         </div>
@@ -59,10 +58,7 @@ export function StudentsPage({
             <Search size={16} />
             <input
               value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setStudentPage(1);
-              }}
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Cari nama atau NIS..."
             />
             <kbd>⌘ K</kbd>
@@ -82,11 +78,11 @@ export function StudentsPage({
             </tr>
           </thead>
           <tbody>
-            {visibleStudents.map((student, index) => (
+            {students.map((student, index) => (
               <tr key={student.id}>
                 <td>
                   <div className="table-person">
-                    <div className={`student-avatar avatar-${((currentPage - 1) * pageSize + index) % 4}`}>
+                    <div className={`student-avatar avatar-${(index % 4)}`}>
                       {student.name
                         .split(" ")
                         .slice(0, 2)
@@ -170,25 +166,25 @@ export function StudentsPage({
       </div>
       <div className="table-footer">
         <span>
-          {students.length === 0
+          {total === 0
             ? "Menampilkan 0 data siswa"
-            : <>Menampilkan <strong>{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, students.length)}</strong> dari <strong>{students.length}</strong> data siswa</>}
+            : <>Menampilkan <strong>{(page - 1) * perPage + 1}–{Math.min(page * perPage, total)}</strong> dari <strong>{total}</strong> data siswa</>}
         </span>
         <div>
           <button
             className="icon-button"
             aria-label="Halaman sebelumnya"
-            disabled={currentPage <= 1}
-            onClick={() => setStudentPage((page) => Math.max(1, page - 1))}
+            disabled={page <= 1}
+            onClick={() => onPageChange(page - 1)}
           >
             <ChevronLeft size={17} />
           </button>
-          <span className="page-number" aria-current="page">{currentPage}</span>
+          <span className="page-number" aria-current="page">{page}</span>
           <button
             className="icon-button"
             aria-label="Halaman berikutnya"
-            disabled={currentPage >= totalPages}
-            onClick={() => setStudentPage((page) => Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages}
+            onClick={() => onPageChange(page + 1)}
           >
             <ChevronRight size={17} />
           </button>

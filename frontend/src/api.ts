@@ -775,6 +775,42 @@ export async function fetchPortalData(academicYearId?: number | null): Promise<P
   return data.data
 }
 
+export type PaginatedStudent = {
+  id: number
+  nisn: string
+  student_number: string
+  full_name: string
+  class_level: string
+  class_level_id: number
+}
+
+export type PaginatedStudentsResponse = {
+  data: PaginatedStudent[]
+  meta: {
+    current_page: number
+    last_page: number
+    per_page: number
+    total: number
+    from: number | null
+    to: number | null
+  }
+}
+
+export async function fetchPaginatedStudents(input: {
+  page?: number
+  per_page?: number
+  search?: string
+  class_level_id?: number
+}): Promise<PaginatedStudentsResponse> {
+  const params: Record<string, string | number> = {}
+  if (input.page !== undefined) params.page = input.page
+  if (input.per_page !== undefined) params.per_page = input.per_page
+  if (input.search) params.search = input.search
+  if (input.class_level_id !== undefined) params.class_level_id = input.class_level_id
+  const { data } = await api.get<{ data: PaginatedStudentsResponse }>('/admin/siswa', { params })
+  return data.data
+}
+
 export async function fetchStudentBills(
   studentId: number,
   academicYearId?: number | null,

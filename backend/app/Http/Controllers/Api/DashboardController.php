@@ -108,13 +108,17 @@ class DashboardController extends Controller
                         continue;
                     }
 
-                    $totalCount++;
                     $bill = $billsByStudentAndMonth->get("{$student->id}:{$month}");
-                    if ($bill?->status === 'lunas') {
+                    if (! $bill) {
+                        continue;
+                    }
+
+                    $totalCount++;
+                    if ($bill->status === 'lunas') {
                         $months[] = $month;
                     } else {
                         $unpaidCount++;
-                        $arrears += (float) ($bill->amount ?? $rate);
+                        $arrears += (float) $bill->amount;
                     }
                 }
                 foreach ($nonSppRates as $rate) {
@@ -231,52 +235,22 @@ class DashboardController extends Controller
 
     private function sppSummary(int $yearId): array
     {
-        $studentsByLevel = DB::table('students')
-            ->where('is_active', true)
-            ->select('class_level_id')
-            ->selectRaw('COUNT(*) as student_count')
-            ->groupBy('class_level_id')
-            ->pluck('student_count', 'class_level_id');
-
-        $billsByLevelAndMonth = DB::table('spp_bills')
+        $bills = DB::table('spp_bills')
             ->join('students', 'students.id', '=', 'spp_bills.student_id')
             ->where('spp_bills.academic_year_id', $yearId)
             ->where('students.is_active', true)
-            ->select('students.class_level_id', 'spp_bills.month')
-            ->selectRaw('COUNT(*) as bill_count')
-            ->selectRaw("SUM(CASE WHEN spp_bills.status = 'lunas' THEN 1 ELSE 0 END) as paid_count")
-            ->selectRaw("SUM(CASE WHEN spp_bills.status = 'belum_bayar' THEN spp_bills.amount ELSE 0 END) as unpaid_amount")
-            ->groupBy('students.class_level_id', 'spp_bills.month')
-            ->get()
-            ->keyBy(fn ($bill) => "{$bill->class_level_id}:{$bill->month}");
+            ->get(['spp_bills.month', 'spp_bills.status', 'spp_bills.amount']);
 
         $arrears = 0.0;
         $paidCount = 0;
         $unpaidCount = 0;
-        $totalCount = 0;
 
-        $periods = DB::table('spp_periods')
-            ->where('academic_year_id', $yearId)
-            ->get(['class_level_id', 'month_start', 'month_end', 'monthly_amount']);
-
-        foreach ($periods as $period) {
-            $studentCount = (int) ($studentsByLevel[$period->class_level_id] ?? 0);
-            if ($studentCount === 0) {
-                continue;
-            }
-
-            foreach (range((int) $period->month_start, (int) $period->month_end) as $month) {
-                $key = "{$period->class_level_id}:{$month}";
-                $bill = $billsByLevelAndMonth->get($key);
-                $paid = (int) ($bill->paid_count ?? 0);
-                $existing = (int) ($bill->bill_count ?? 0);
-                $missing = max(0, $studentCount - $existing);
-
-                $totalCount += $studentCount;
-                $paidCount += $paid;
-                $unpaidCount += max(0, $existing - $paid) + $missing;
-                $arrears += (float) ($bill->unpaid_amount ?? 0)
-                    + ($missing * (float) $period->monthly_amount);
+        foreach ($bills as $bill) {
+            if ($bill->status === 'lunas') {
+                $paidCount++;
+            } else {
+                $unpaidCount++;
+                $arrears += (float) $bill->amount;
             }
         }
 
@@ -284,7 +258,7 @@ class DashboardController extends Controller
             'arrears' => $arrears,
             'paid_count' => $paidCount,
             'unpaid_count' => $unpaidCount,
-            'total_count' => $totalCount,
+            'total_count' => $bills->count(),
         ];
     }
 

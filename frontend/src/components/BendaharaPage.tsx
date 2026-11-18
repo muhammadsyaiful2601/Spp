@@ -367,17 +367,18 @@ export function BendaharaPage({
                       <ShieldCheck size={15} />
                     )}
                   </button>
-                  <button
-                    type="button"
-                    className={`icon-button is-danger ${treasurer.can_delete ? "" : "is-locked"}`}
-                    title={
-                      treasurer.delete_blocked_reason ?? "Hapus akun bendahara"
-                    }
-                    disabled={!treasurer.can_delete}
-                    onClick={() => setDialog({ kind: "delete", treasurer })}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {treasurer.can_delete && (
+                    <button
+                      type="button"
+                      className="icon-button is-danger"
+                      title={
+                        treasurer.delete_blocked_reason ?? "Hapus akun bendahara"
+                      }
+                      onClick={() => setDialog({ kind: "delete", treasurer })}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               </article>
             ))}

@@ -175,12 +175,36 @@ export function printStudentReportPage({
           .signature p { margin: 0 0 2px; }
           .signature-space { height: 56px; }
           .signature-name { font-weight: 700; text-decoration: underline; }
+          /* Without an explicit page box the printer driver picks its own default
+             margins, so the usable width is unknown at authoring time. Declaring
+             A4 with 12mm margins pins it at 186mm: the content then lays out at
+             real size instead of being scaled down to fit, which is what made the
+             rows shorter, the text smaller and the whole document a page longer. */
+          @page { size: A4 portrait; margin: 12mm; }
           @media print {
-            body { padding: 0; font-size: 11px; }
+            body { padding: 0; font-size: 10.5px; }
+            /* 900px is wider than the 186mm page box; letting it overflow made
+               Chrome shrink the entire document to fit, which shrank the text and
+               added height rather than saving it. */
+            main { max-width: none; width: 100%; }
+            .logo { width: 54px; height: 54px; }
+            h1 { font-size: 17px; }
             header { break-inside: avoid; }
             h2 { break-after: avoid; }
             tr { break-inside: avoid; }
+            thead { display: table-header-group; }
+            tfoot { break-inside: avoid; }
             .signature { break-inside: avoid; }
+            /* Tighter rhythm than the screen view: every block below still fits
+               comfortably on one sheet for a typical student, so the report stops
+               spilling a nearly-empty second page for a handful of transactions. */
+            h2 { margin: 14px 0 6px; }
+            .report-title { margin: 12px 0 3px; }
+            th, td { padding: 4px 6px; }
+            .bank { margin: 10px 0 0; padding: 7px 9px; }
+            .signature { margin-top: 18px; }
+            .signature-space { height: 34px; }
+            .printed { margin-top: 10px; }
           }
         </style>
       </head>
