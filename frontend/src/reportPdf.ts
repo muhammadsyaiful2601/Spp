@@ -325,7 +325,14 @@ export async function downloadPaymentReport({
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 14;
   const now = new Date();
-  const logoSource = await fetchSchoolLogoDataUrl();
+  // Logo bersifat opsional: kalau tak tersedia atau gagal dimuat, laporan tetap
+  // dicetak tanpa logo daripada membatalkan seluruh proses unduhan/cetak.
+  let logoSource: string | null = null;
+  try {
+    logoSource = await fetchSchoolLogoDataUrl();
+  } catch {
+    logoSource = null;
+  }
   const logo = await convertLogoToPng(logoSource ?? "");
   const institutionName = (school.foundation.trim() || school.school.trim()).toLocaleUpperCase(
     "id-ID",
@@ -843,7 +850,13 @@ export async function downloadStudentReport({
     const studentTransactions = transactions.filter(
       (transaction) => transaction.student === student.name,
     );
-    const logoDataUrl = await fetchSchoolLogoDataUrl();
+    // Logo bersifat opsional: kalau gagal dimuat, cetak tetap lanjut tanpa logo.
+    let logoDataUrl: string | null = null;
+    try {
+      logoDataUrl = await fetchSchoolLogoDataUrl();
+    } catch {
+      logoDataUrl = null;
+    }
     printStudentReportPage({
       printWindow,
       school,
