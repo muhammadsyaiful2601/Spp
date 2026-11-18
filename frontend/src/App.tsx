@@ -1430,8 +1430,14 @@ const sppPeriodsQuery = useQuery({
 
     if (mode === "print") {
       try {
-        const { fetchSchoolLogoDataUrl } = await import("./api");
-        const logoDataUrl = await fetchSchoolLogoDataUrl();
+        // Logo bersifat opsional: kalau gagal dimuat, cetak tetap lanjut tanpa logo.
+        let logoDataUrl: string | null = null;
+        try {
+          const { fetchSchoolLogoDataUrl } = await import("./api");
+          logoDataUrl = await fetchSchoolLogoDataUrl();
+        } catch {
+          logoDataUrl = null;
+        }
 
         printStudentReportPage({
           printWindow: printWindow!,
